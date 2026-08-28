@@ -47,7 +47,7 @@
 // of raw produce. Every tag below is therefore mapped from an explicit signal
 // in the source, never inferred from a program name, and the run summary
 // prints per-tag coverage so a gap is visible instead of silent.
-import { createClient } from "@clickhouse/client";
+import { neon } from "@neondatabase/serverless";
 
 const TAGS = ["shelf_stable", "prepared", "delivery", "halal", "kosher", "baby"];
 
@@ -412,7 +412,7 @@ async function loadSfmfb() {
       languages: locatorLanguages(row),
       tags: locatorTags(row),
       requirements: locatorRequirements(row),
-      active: 1,
+      active: true,
       source: "sfmfb-locator",
       updated_at: UPDATED_AT,
       _precision: coords.precision,
@@ -603,7 +603,7 @@ async function loadTwo11() {
       languages: ["en"],
       tags: p.tags,
       requirements: p.requirements,
-      active: 1,
+      active: true,
       source: "211-bayarea",
       updated_at: UPDATED_AT,
       _precision: coords.precision,
@@ -647,19 +647,14 @@ function validate(row) {
 // ---------------------------------------------------------------------------
 
 let client = null;
-function ch() {
+function db() {
   if (client) return client;
-  const url = process.env.CLICKHOUSE_URL;
+  const url = process.env.DATABASE_URL;
   if (!url) {
-    console.error("CLICKHOUSE_URL is not set. Use --dry-run, or copy .env.example to .env.local.");
+    console.error("DATABASE_URL is not set. Use --dry-run, or run `vercel env pull`.");
     process.exit(1);
   }
-  client = createClient({
-    url,
-    username: process.env.CLICKHOUSE_USER ?? "default",
-    password: process.env.CLICKHOUSE_PASSWORD ?? "",
-    database: process.env.CLICKHOUSE_DATABASE ?? "sffood",
-  });
+  client = neon(url);
   return client;
 }
 
@@ -670,31 +665,61 @@ const COLUMNS = [
 
 const forInsert = (row) => Object.fromEntries(COLUMNS.map((c) => [c, row[c]]));
 
+/**
+ * Batched upsert on the primary key. access_tags is deliberately absent from
+ * COLUMNS and so is never overwritten here: accessibility is curated by hand
+ * and no upstream feed carries it. A nightly import must not wipe it.
+ */
+async function upsertPantries(values) {
+  if (values.length === 0) return;
+  const assignments = COLUMNS.filter((c) => c !== "pantry_id")
+    .map((c) => `${c} = EXCLUDED.${c}`)
+    .join(", ");
+  const CHUNK = 100;
+  for (let i = 0; i < values.length; i += CHUNK) {
+    const chunk = values.slice(i, i + CHUNK);
+    const params = [];
+    const tuples = chunk.map((row) => {
+      const base = params.length;
+      for (const c of COLUMNS) params.push(row[c]);
+      return `(${COLUMNS.map((_, j) => `$${base + j + 1}`).join(", ")})`;
+    });
+    await db().query(
+      `INSERT INTO pantries (${COLUMNS.join(", ")}) VALUES ${tuples.join(", ")}
+       ON CONFLICT (pantry_id) DO UPDATE SET ${assignments}`,
+      params,
+    );
+  }
+}
+
+/** Retiring a site is now an UPDATE, not a re-insert of the whole row. */
+async function deactivate(pantryIds) {
+  if (pantryIds.length === 0) return;
+  await db().query(
+    `UPDATE pantries SET active = false, updated_at = $2
+     WHERE pantry_id = ANY ($1::text[])`,
+    [pantryIds, UPDATED_AT],
+  );
+}
+
 async function existingRows(sources) {
-  const rs = await ch().query({
-    query: `SELECT ${COLUMNS.join(", ")}
-            FROM pantries FINAL
-            WHERE active = 1 AND source IN {sources:Array(String)}`,
-    query_params: { sources },
-    format: "JSONEachRow",
-  });
-  return rs.json();
+  return db().query(
+    `SELECT ${COLUMNS.join(", ")} FROM pantries
+     WHERE active AND source = ANY ($1::text[])`,
+    [sources],
+  );
 }
 
 async function retireDevSeed() {
   if (OPTS.purgeDevSeed) {
-    await ch().command({
-      query: "ALTER TABLE pantries DELETE WHERE source = 'dev-seed'",
-    });
+    // programs.pantry_id is ON DELETE SET NULL, so a purge orphans any seeded
+    // program rather than failing or silently deleting it.
+    await db().query("DELETE FROM pantries WHERE source = 'dev-seed'");
     return "deleted";
   }
   const stale = await existingRows(["dev-seed"]);
   if (stale.length === 0) return "none present";
-  await ch().insert({
-    table: "pantries",
-    values: stale.map((r) => ({ ...r, active: 0, updated_at: UPDATED_AT })),
-    format: "JSONEachRow",
-  });
+  await deactivate(stale.map((r) => r.pantry_id));
   return `${stale.length} deactivated`;
 }
 
@@ -807,37 +832,19 @@ async function main() {
     }
   }
 
-  await ch().insert({
-    table: "pantries",
-    values: rows.map(forInsert),
-    format: "JSONEachRow",
-  });
+  await upsertPantries(rows.map(forInsert));
   console.log(`\nupserted ${rows.length} sites`);
 
   const fresh = new Set(rows.map((r) => r.pantry_id));
   const gone = before.filter((r) => !fresh.has(r.pantry_id));
   if (gone.length) {
-    await ch().insert({
-      table: "pantries",
-      values: gone.map((r) => ({ ...r, active: 0, updated_at: UPDATED_AT })),
-      format: "JSONEachRow",
-    });
+    await deactivate(gone.map((r) => r.pantry_id));
     console.log(`retired ${gone.length} sites no longer in their feed`);
   }
 
   console.log(`dev fixtures: ${await retireDevSeed()}`);
-
-  // Reads use FINAL, so this is tidiness rather than correctness — but it keeps
-  // the superseded versions from piling up over daily runs.
-  try {
-    await ch().command({ query: "OPTIMIZE TABLE pantries FINAL" });
-  } catch (err) {
-    console.log(`(OPTIMIZE skipped: ${err.message})`);
-  }
 }
 
-try {
-  await main();
-} finally {
-  if (client) await client.close();
-}
+// No OPTIMIZE step any more: an upsert replaces the row in place, so there are
+// no superseded versions to compact away.
+await main();

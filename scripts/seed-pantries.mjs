@@ -5,14 +5,31 @@
 // Real data comes from the SF-Marin Food Bank locator, DataSF, and 211 Bay Area
 // (Open Referral HSDS). Load real sites before pointing SMS_PROVIDER at a
 // live carrier.
-import { createClient } from "@clickhouse/client";
+//
+// The catalog lives in Postgres — see db/postgres/schema.sql. Seeding is an
+// upsert on the primary key, so re-running edits the fixtures in place instead
+// of piling up duplicate rows.
+import { neon } from "@neondatabase/serverless";
 
-const client = createClient({
-  url: process.env.CLICKHOUSE_URL,
-  username: process.env.CLICKHOUSE_USER ?? "default",
-  password: process.env.CLICKHOUSE_PASSWORD ?? "",
-  database: process.env.CLICKHOUSE_DATABASE ?? "sffood",
-});
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is not set. Run `vercel env pull` first.");
+  process.exit(1);
+}
+
+const sql = neon(process.env.DATABASE_URL);
+
+async function upsert(table, key, values) {
+  for (const row of values) {
+    const cols = Object.keys(row);
+    const placeholders = cols.map((_, i) => `$${i + 1}`);
+    const assignments = cols.filter((c) => c !== key).map((c) => `${c} = EXCLUDED.${c}`);
+    await sql.query(
+      `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders.join(", ")})
+       ON CONFLICT (${key}) DO UPDATE SET ${assignments.join(", ")}`,
+      cols.map((c) => row[c]),
+    );
+  }
+}
 
 const now = new Date().toISOString().replace("T", " ").replace("Z", "");
 
@@ -22,7 +39,7 @@ const rows = [
     address: "000 Example St (NOT A REAL SITE)", zip: "94110",
     lat: 37.7599, lon: -122.4148, phone: "", hours: "Tue & Thu, 10am-1pm",
     open_days: [2, 4], languages: ["en", "es"],
-    tags: ["shelf_stable", "baby"], requirements: "", active: 1,
+    tags: ["shelf_stable", "baby"], requirements: "", active: true,
     access_tags: ["wheelchair", "step_free", "accessible_restroom"],
     source: "dev-seed", updated_at: now,
   },
@@ -31,7 +48,7 @@ const rows = [
     address: "000 Example Ave (NOT A REAL SITE)", zip: "94108",
     lat: 37.7941, lon: -122.4078, phone: "", hours: "Daily, 11:30am-1pm",
     open_days: [0, 1, 2, 3, 4, 5, 6], languages: ["en", "zh-Hans"],
-    tags: ["prepared", "shelf_stable"], requirements: "", active: 1,
+    tags: ["prepared", "shelf_stable"], requirements: "", active: true,
     access_tags: [],
     source: "dev-seed", updated_at: now,
   },
@@ -40,13 +57,13 @@ const rows = [
     address: "000 Example Blvd (NOT A REAL SITE)", zip: "94102",
     lat: 37.7835, lon: -122.4152, phone: "", hours: "Wed, home delivery",
     open_days: [3], languages: ["en", "es", "zh-Hans"],
-    tags: ["delivery", "shelf_stable", "halal"], requirements: "", active: 1,
+    tags: ["delivery", "shelf_stable", "halal"], requirements: "", active: true,
     access_tags: ["wheelchair", "near_transit", "asl"],
     source: "dev-seed", updated_at: now,
   },
 ];
 
-await client.insert({ table: "pantries", values: rows, format: "JSONEachRow" });
+await upsert("pantries", "pantry_id", rows);
 
 // Events are what the agent reaches for first, so the dev data needs some.
 // Times are relative to now so the fixtures are always "upcoming".
@@ -64,7 +81,7 @@ const events = [
     lat: 37.7599, lon: -122.4148, address: "000 Example St (NOT A REAL SITE)",
     languages: ["en", "es"], tags: ["shelf_stable", "baby"],
     access_tags: ["wheelchair", "step_free"],
-    notes: "Bring a bag if you have one", requirements: "", cancelled: 0,
+    notes: "Bring a bag if you have one", requirements: "", cancelled: false,
     source: "dev-seed", updated_at: now,
   },
   {
@@ -74,7 +91,7 @@ const events = [
     lat: 37.7941, lon: -122.4078, address: "000 Example Ave (NOT A REAL SITE)",
     languages: ["en", "zh-Hans"], tags: ["prepared"],
     access_tags: ["seating", "near_transit"],
-    notes: "", requirements: "", cancelled: 0,
+    notes: "", requirements: "", cancelled: false,
     source: "dev-seed", updated_at: now,
   },
   {
@@ -84,12 +101,12 @@ const events = [
     lat: 37.7835, lon: -122.4152, address: "000 Example Blvd (NOT A REAL SITE)",
     languages: ["en", "es", "zh-Hans"], tags: ["delivery", "shelf_stable", "halal"],
     access_tags: ["wheelchair"],
-    notes: "Call ahead to be added to the route", requirements: "", cancelled: 0,
+    notes: "Call ahead to be added to the route", requirements: "", cancelled: false,
     source: "dev-seed", updated_at: now,
   },
 ];
 
-await client.insert({ table: "pantry_events", values: events, format: "JSONEachRow" });
+await upsert("pantry_events", "event_id", events);
 
 // Programs render their own apply form from `fields`, so adding a real program
 // later is a data change, not a code change.
@@ -102,7 +119,7 @@ const programs = [
     provider: "Example Community Org (NOT REAL)",
     kind: "calfresh",
     summary: "Help filling out a CalFresh (SNAP) application. Someone calls you back.",
-    pantry_id: "",
+    pantry_id: null,
     zip_scope: [],
     languages: ["en", "es", "zh-Hans"],
     requirements: "",
@@ -123,7 +140,7 @@ const programs = [
         label: L("I would like an interpreter", "我需要口译员", "Quiero un intérprete"),
       },
     ]),
-    external_url: "", active: 1, updated_at: now,
+    external_url: "", active: true, updated_at: now,
   },
   {
     program_id: "dev-prog-delivery",
@@ -147,7 +164,7 @@ const programs = [
         help: L("Stairs, buzzer, best time of day.", "楼梯、门铃、最佳时间。", "Escaleras, timbre, mejor hora."),
       },
     ]),
-    external_url: "", active: 1, updated_at: now,
+    external_url: "", active: true, updated_at: now,
   },
   {
     program_id: "dev-prog-senior",
@@ -166,14 +183,14 @@ const programs = [
         label: L("Year you were born", "您的出生年份", "Año de nacimiento"),
       },
     ]),
-    external_url: "", active: 1, updated_at: now,
+    external_url: "", active: true, updated_at: now,
   },
 ];
 
-await client.insert({ table: "programs", values: programs, format: "JSONEachRow" });
+// After pantries: programs.pantry_id is a foreign key now.
+await upsert("programs", "program_id", programs);
 
 console.log(
   `Seeded ${rows.length} DEV pantries, ${events.length} DEV events, ` +
     `${programs.length} DEV programs. Do not ship these.`,
 );
-await client.close();

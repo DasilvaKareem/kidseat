@@ -4,6 +4,31 @@ SMS-first free-food discovery for San Francisco and Marin. Three languages,
 five screens, no account. Analytics in ClickHouse; staff ask questions of it
 through LibreChat.
 
+## Two databases, one rule
+
+Postgres holds rows that **change**. ClickHouse holds rows that are only ever
+**appended**.
+
+That single question decides where anything lives, and it is not a preference —
+each store is bad at the other's job. The pantry and program catalog and the
+applications people submit go in Postgres, because they are edited: hours move,
+a program is deactivated, an application goes from `submitted` to `withdrawn`.
+Those need a foreign key so an application cannot point at a program that does
+not exist, a `CHECK` so a status cannot drift to a typo, and a real `UPDATE`.
+
+Consents, message events, onboarding funnel steps, and application state
+transitions go in ClickHouse, because nothing there is ever revised and the
+analyst queries are scans — "signups by day and locale" over every row, not a
+lookup of one. That is what a column store is for.
+
+Applications used to live in ClickHouse, where withdrawing meant inserting a
+whole new copy of the row and trusting `ReplacingMergeTree` to collapse it
+later. That is a workaround for a missing `UPDATE`, and it raced with itself.
+It is one statement in Postgres now.
+
+The two stores join on `phone_hash`, the same HMAC in both, so neither holds a
+phone number. Schemas: `db/postgres/schema.sql`, `db/clickhouse/schema.sql`.
+
 ## Why SMS
 
 The people this serves have phones, not smartphones with spare data. Everything
@@ -14,7 +39,8 @@ after signup happens over plain text: `FOOD` finds sites now, `CHECK` screens fo
 | Piece | Choice |
 |---|---|
 | Web app | Next.js 16 App Router on Vercel — SMS onboarding at `/`, map at `/map` |
-| Data | ClickHouse Cloud (single store) |
+| Data (state) | Neon Postgres — catalog, programs, applications |
+| Data (events) | ClickHouse Cloud — consent, messaging, funnel analytics |
 | SMS | provider-agnostic — Telnyx / Twilio / `console` for dev |
 | Model | Gemini via Vercel AI Gateway, with tools |
 | Places + routing | Google Maps Platform (Places API New, Routes API) |
@@ -35,7 +61,7 @@ printf 'PHONE_HASH_KEY=%s\nPHONE_ENC_KEY=%s\nSESSION_SECRET=%s\nCRON_SECRET=%s\n
 Paste those into `.env.local`, add your ClickHouse URL and password, then:
 
 ```bash
-npm run db:push && npm run db:seed && npm run dev
+npm run pg:push && npm run db:push && npm run db:seed && npm run dev
 ```
 
 `SMS_PROVIDER=console` is the default, so nothing is sent — outbound messages
@@ -201,13 +227,23 @@ student regardless of income.
 ### What a screening leaves behind
 
 Route transiently, persist minimally. While the questions are being answered the
-raw answers live in `screenings.answers` with a two-day column TTL, because an
-SMS conversation spans hours. The moment it finishes, that column is cleared and
-what remains is coarse flags (`senior`, `has_kids`, `no_kitchen`) and which
-programs the person was pointed at. No income band, no housing status, no
-disability answer, and never the citizenship branch. The web section never
-persists answers at all — the browser holds them, `/api/screening` routes on
-them, and only the outcome is written.
+raw answers live in `screenings.answers`, because an SMS conversation spans
+hours. The moment it finishes, that column is cleared and what remains is coarse
+flags (`senior`, `has_kids`, `no_kitchen`) and which programs the person was
+pointed at. No income band, no housing status, no disability answer, and never
+the citizenship branch. The web section never persists answers at all — the
+browser holds them, `/api/screening` routes on them, and only the outcome is
+written.
+
+A screening is mutable state — one row per person, rewritten on every reply —
+so it lives in Postgres with the catalog and applications, not in ClickHouse.
+That makes "a finished screening holds no answers" a CHECK constraint rather
+than a promise the calling code keeps, but it also costs the column TTL that
+used to erase abandoned screenings on its own. `sweepScreeningAnswers()` does
+that job now, from the daily cron: answers untouched for two days are erased,
+rows are dropped at 400 days. **If the cron stops running, answers stop being
+erased** — the endpoint returns its sweep counts so a run that silently stopped
+is visible in the logs.
 
 Analysts get `v_screening_outcomes`: completion rate and referral mix by day and
 language, with no per-person row.
@@ -315,6 +351,7 @@ the trust model.
 
 ```bash
 npm run dev          # local, SMS to console
+npm run pg:push      # apply db/postgres/schema.sql (idempotent)
 npm run db:push      # apply db/clickhouse/schema.sql (idempotent)
 npm run db:seed      # dev pantry fixtures
 npm run db:import    # real SF + Marin sites; --dry-run to preview

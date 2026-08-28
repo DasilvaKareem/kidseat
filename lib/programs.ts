@@ -1,4 +1,6 @@
+import crypto from "node:crypto";
 import { pgQuery } from "./postgres";
+import { insert, chTime } from "./clickhouse";
 
 export type FieldType = "text" | "tel" | "select" | "checkbox" | "textarea";
 
@@ -127,6 +129,30 @@ export function validateAnswers(
   return missing.length > 0 ? { ok: false, missing } : { ok: true, clean };
 }
 
+/**
+ * Postgres owns where an application stands; ClickHouse gets the fact that it
+ * moved. Analytics must never be able to fail a submission, so this is
+ * best-effort -- a dropped analytics row is a gap in a chart, a thrown one
+ * would be a person who could not apply. Answers are deliberately not sent.
+ */
+async function recordTransition(app: Application): Promise<void> {
+  try {
+    await insert("application_events", [
+      {
+        event_id: crypto.randomUUID(),
+        application_id: app.application_id,
+        phone_hash: app.phone_hash,
+        program_id: app.program_id,
+        status: app.status,
+        locale: app.locale,
+        created_at: chTime(),
+      },
+    ]);
+  } catch (err) {
+    console.error("[programs] failed to log application_event", err);
+  }
+}
+
 export async function submitApplication(input: {
   phoneHash: string;
   programId: string;
@@ -142,6 +168,7 @@ export async function submitApplication(input: {
      RETURNING ${APPLICATION_COLS}`,
     [input.phoneHash, input.programId, JSON.stringify(input.answers), input.locale],
   );
+  await recordTransition(rows[0]);
   return rows[0];
 }
 
@@ -153,12 +180,14 @@ export async function withdrawApplication(
   // One statement, and still scoped by phone_hash as well as id so nobody can
   // withdraw someone else's. Read-then-write was only ever needed because
   // ClickHouse had no UPDATE; it also raced with itself.
-  const rows = await pgQuery<{ application_id: string }>(
+  const rows = await pgQuery<Application>(
     `UPDATE applications
      SET status = 'withdrawn', updated_at = now()
      WHERE application_id = $1::uuid AND phone_hash = $2 AND status <> 'withdrawn'
-     RETURNING application_id`,
+     RETURNING ${APPLICATION_COLS}`,
     [applicationId, phoneHash],
   );
-  return rows.length > 0;
+  if (rows.length === 0) return false;
+  await recordTransition(rows[0]);
+  return true;
 }

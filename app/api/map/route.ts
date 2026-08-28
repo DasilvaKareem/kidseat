@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { query } from "@/lib/clickhouse";
+import { pgQuery } from "@/lib/postgres";
 import { isLocale, type Locale } from "@/lib/i18n";
 import { formatEventTime } from "@/lib/format-time";
 
@@ -61,38 +61,41 @@ export async function GET(req: Request) {
   try {
     const [pantries, events, programCounts] = await Promise.all([
       wantPantries
-        ? query<any>(
+        ? pgQuery<any>(
             `SELECT pantry_id, name, address, zip, lat, lon, phone, hours,
                     open_days, languages, tags, requirements, access_tags
-             FROM pantries FINAL
-             WHERE active = 1
-               AND lat BETWEEN {south:Float64} AND {north:Float64}
-               AND lon BETWEEN {west:Float64} AND {east:Float64}
-               AND (NOT {today:UInt8} OR empty(open_days) OR has(open_days, {dow:UInt8}))
+             FROM pantries
+             WHERE active
+               AND lat BETWEEN $1 AND $2
+               AND lon BETWEEN $3 AND $4
+               AND (NOT $5::boolean OR cardinality(open_days) = 0
+                    OR $6::smallint = ANY (open_days))
              LIMIT 300`,
-            { south, north, west, east, today: today ? 1 : 0, dow },
+            [south, north, west, east, today, dow],
           )
         : Promise.resolve([]),
       wantEvents
-        ? query<any>(
-            // Aliases must NOT reuse the column names: ClickHouse resolves an
-            // alias inside WHERE/ORDER BY, so `AS starts_at` would make the
-            // range filter compare a String to a DateTime and throw.
-            `SELECT event_id, pantry_id, title, toString(starts_at) AS starts_text,
-                    toString(ends_at) AS ends_text, zip, lat, lon, address,
-                    languages, tags, requirements, access_tags
-             FROM v_upcoming_events
-             WHERE lat BETWEEN {south:Float64} AND {north:Float64}
-               AND lon BETWEEN {west:Float64} AND {east:Float64}
-               AND starts_at < now() + INTERVAL {hours:UInt32} HOUR
+        ? pgQuery<any>(
+            // The client parses these as 'YYYY-MM-DD hh:mm:ss' UTC, so they are
+            // rendered to text here rather than returned as Date objects.
+            `SELECT event_id, pantry_id, title,
+                    to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS starts_text,
+                    to_char(ends_at   AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS ends_text,
+                    zip, lat, lon, address, languages, tags, requirements, access_tags
+             FROM pantry_events
+             WHERE NOT cancelled
+               AND ends_at > now()
+               AND lat BETWEEN $1 AND $2
+               AND lon BETWEEN $3 AND $4
+               AND starts_at < now() + make_interval(hours => $5::int)
              ORDER BY starts_at
              LIMIT 300`,
-            { south, north, west, east, hours: today ? 24 : 168 },
+            [south, north, west, east, today ? 24 : 168],
           )
         : Promise.resolve([]),
-      query<{ pantry_id: string; n: string }>(
-        `SELECT pantry_id, toString(count()) AS n FROM programs FINAL
-         WHERE active = 1 AND pantry_id != '' GROUP BY pantry_id`,
+      pgQuery<{ pantry_id: string; n: string }>(
+        `SELECT pantry_id, count(*)::text AS n FROM programs
+         WHERE active AND pantry_id IS NOT NULL GROUP BY pantry_id`,
       ),
     ]);
 

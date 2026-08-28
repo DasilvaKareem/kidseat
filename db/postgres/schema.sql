@@ -106,3 +106,84 @@ CREATE TABLE IF NOT EXISTS applications (
 -- Every read is "this person's applications, newest first".
 CREATE INDEX IF NOT EXISTS applications_by_person
     ON applications (phone_hash, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Accessibility
+-- ---------------------------------------------------------------------------
+-- Our own data is authoritative here. Google knows a venue's front door; it
+-- does not know that the pantry runs out of the step-free side entrance on
+-- Thursdays. Vocabulary: wheelchair | step_free | accessible_restroom |
+-- seating | near_transit | parking | asl | service_animal_ok
+--
+-- An absent tag means UNKNOWN, never "no". The UI must not render a missing
+-- tag as inaccessible.
+ALTER TABLE pantries
+    ADD COLUMN IF NOT EXISTS access_tags text[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE pantry_events
+    ADD COLUMN IF NOT EXISTS access_tags text[] NOT NULL DEFAULT '{}';
+
+-- ---------------------------------------------------------------------------
+-- Eligibility screening
+-- ---------------------------------------------------------------------------
+-- One row per person, updated in place as they answer. This is mutable state:
+-- a screening moves in_progress -> complete or abandoned, and every reply
+-- rewrites the same row. It briefly lived in ClickHouse as a
+-- ReplacingMergeTree, which meant re-inserting the whole row -- started_at and
+-- all -- on every SMS reply and trusting a background merge to collapse the
+-- duplicates. See lib/postgres.ts for why that is not a design.
+--
+-- `answers` is the only place raw screening answers exist, and it is
+-- deliberately short-lived: sweepScreeningAnswers() blanks it two days after
+-- the last reply and completeScreening() clears it the moment the routing is
+-- computed. What survives is `flags` (coarse categories like senior or
+-- has_kids) and `referrals` (which programs the person was pointed at) --
+-- enough to report on, not enough to profile.
+--
+-- Immigration status is never asked as a routing gate, and the one optional
+-- CalFresh citizenship branch is stripped in lib/screenings.ts before any
+-- write, so it cannot appear in this table even transiently.
+CREATE TABLE IF NOT EXISTS screenings (
+    phone_hash  text PRIMARY KEY,
+    locale      text NOT NULL DEFAULT '',
+    status      text NOT NULL DEFAULT 'in_progress',
+    answers     jsonb NOT NULL DEFAULT '{}'::jsonb,
+    flags       text[] NOT NULL DEFAULT '{}',
+    referrals   text[] NOT NULL DEFAULT '{}',
+    misses      smallint NOT NULL DEFAULT 0,  -- consecutive unparsed replies
+    started_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT screenings_status CHECK (
+        status IN ('in_progress', 'complete', 'abandoned')
+    ),
+    CONSTRAINT screenings_answers_is_object CHECK (jsonb_typeof(answers) = 'object'),
+    -- The retention promise as a table constraint rather than a habit of the
+    -- calling code: once a screening stops running it holds no answers, and a
+    -- write that tried to leave some behind fails instead of succeeding
+    -- quietly. ClickHouse could express the TTL but not this.
+    CONSTRAINT screenings_finished_holds_no_answers CHECK (
+        status = 'in_progress' OR answers = '{}'::jsonb
+    )
+);
+
+-- The sweep's own query: the rows still holding answers, oldest first. Partial,
+-- so it stays small -- almost every row in the table has already been cleared.
+CREATE INDEX IF NOT EXISTS screenings_pending_erasure
+    ON screenings (updated_at) WHERE answers <> '{}'::jsonb;
+
+-- Which programs the screening sends people to, and where it stalls. No
+-- answers, no flags per person -- the analyst sees rates, not people.
+CREATE OR REPLACE VIEW v_screening_outcomes AS
+SELECT (started_at AT TIME ZONE 'UTC')::date              AS day,
+       locale,
+       status,
+       count(*)                                           AS screenings,
+       count(*) FILTER (WHERE 'calfresh'  = ANY (referrals)) AS to_calfresh,
+       count(*) FILTER (WHERE 'wic'       = ANY (referrals)) AS to_wic,
+       count(*) FILTER (WHERE 'csfp'      = ANY (referrals)) AS to_senior_box,
+       count(*) FILTER (WHERE 'sun_bucks' = ANY (referrals)) AS to_sun_bucks,
+       count(*) FILTER (WHERE 'hdg'       = ANY (referrals)) AS to_delivery,
+       count(*) FILTER (WHERE 'rmp'       = ANY (referrals)) AS to_restaurant_meals,
+       count(*) FILTER (WHERE cardinality(referrals) <= 1)   AS nothing_beyond_pantries
+FROM screenings
+GROUP BY day, locale, status;

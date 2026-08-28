@@ -3,6 +3,7 @@
 // to the person as "check your phone number".
 const REQUIRED = [
   "CLICKHOUSE_URL",
+  "DATABASE_URL",
   "PHONE_HASH_KEY",
   "PHONE_ENC_KEY",
   "SESSION_SECRET",

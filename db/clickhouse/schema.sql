@@ -85,28 +85,6 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (created_at, phone_hash);
 
--- Distribution sites. Loaded from SF-Marin Food Bank / DataSF / 211 feeds.
-CREATE TABLE IF NOT EXISTS sffood.pantries
-(
-    pantry_id     String,
-    name          String,
-    address       String,
-    zip           FixedString(5),
-    lat           Float64,
-    lon           Float64,
-    phone         String DEFAULT '',
-    hours         String DEFAULT '',       -- human-readable, sent verbatim over SMS
-    open_days     Array(UInt8) DEFAULT [], -- 0=Sun
-    languages     Array(LowCardinality(String)) DEFAULT [],
-    tags          Array(LowCardinality(String)) DEFAULT [], -- shelf_stable|prepared|delivery|halal|kosher|baby
-    requirements  String DEFAULT '',       -- '' means no ID / no docs
-    active        UInt8 DEFAULT 1,
-    source        LowCardinality(String) DEFAULT '',
-    updated_at    DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY pantry_id;
-
 -- ---------------------------------------------------------------------------
 -- Views. Point LibreChat at these, not at the base tables.
 -- ---------------------------------------------------------------------------
@@ -155,29 +133,6 @@ GROUP BY day, locale, direction, encoding;
 -- weekly pop-ups, and holiday distributions all have a start and an end, and a
 -- Google listing for the host building will never show them.
 --
--- pantry_id links to pantries.pantry_id for curated sites, or carries a
--- 'gmaps:<place_id>' prefix for a site that only exists in Google's data.
-CREATE TABLE IF NOT EXISTS sffood.pantry_events
-(
-    event_id      String,
-    pantry_id     String,
-    title         String,
-    starts_at     DateTime('UTC'),
-    ends_at       DateTime('UTC'),
-    zip           FixedString(5),
-    lat           Float64,
-    lon           Float64,
-    address       String,
-    languages     Array(LowCardinality(String)) DEFAULT [],
-    tags          Array(LowCardinality(String)) DEFAULT [],
-    notes         String DEFAULT '',
-    requirements  String DEFAULT '',
-    cancelled     UInt8 DEFAULT 0,
-    source        LowCardinality(String) DEFAULT '',
-    updated_at    DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY event_id;
 
 -- Google Places responses. Their terms allow place IDs to be stored
 -- indefinitely but cap other Places content at 30 days, so the TTL below is a
@@ -192,138 +147,48 @@ ENGINE = ReplacingMergeTree(fetched_at)
 ORDER BY cache_key
 TTL fetched_at + INTERVAL 30 DAY;
 
-CREATE OR REPLACE VIEW sffood.v_upcoming_events AS
-SELECT event_id, pantry_id, title, starts_at, ends_at, zip, lat, lon, address,
-       languages, tags, notes, requirements, source
-FROM sffood.pantry_events FINAL
-WHERE cancelled = 0
-  AND ends_at > now();
-
 -- ---------------------------------------------------------------------------
 -- Programs and applications
 -- ---------------------------------------------------------------------------
 
--- Things a person can apply to: CalFresh, home delivery routes, senior boxes,
--- WIC, or registration at a specific site. A program may hang off a pantry
--- (pantry_id set) or stand on its own.
-CREATE TABLE IF NOT EXISTS sffood.programs
-(
-    program_id       String,
-    name             String,
-    provider         String,
-    kind             LowCardinality(String),  -- calfresh|delivery|senior_box|wic|registration|summer_meals|other
-    summary          String,
-    pantry_id        String DEFAULT '',
-    zip_scope        Array(String) DEFAULT [],   -- empty = whole service area
-    languages        Array(LowCardinality(String)) DEFAULT [],
-    requirements     String DEFAULT '',
-    processing_days  UInt16 DEFAULT 0,
-    -- JSON array of field definitions; the apply form is rendered from this so
-    -- a new program needs no code change.
-    fields           String DEFAULT '[]',
-    external_url     String DEFAULT '',
-    active           UInt8 DEFAULT 1,
-    updated_at       DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY program_id;
+-- ---------------------------------------------------------------------------
+-- Eligibility screening
+-- ---------------------------------------------------------------------------
+-- Not here. A screening is one row per person rewritten on every reply, and it
+-- moves in_progress -> complete or abandoned, so it belongs with the other
+-- mutable state in db/postgres/schema.sql. Storing it here meant re-inserting
+-- the whole row on each SMS and leaning on ReplacingMergeTree to tidy up.
 
-CREATE TABLE IF NOT EXISTS sffood.applications
+-- ---------------------------------------------------------------------------
+-- Applications: analytics only
+-- ---------------------------------------------------------------------------
+-- The applications themselves live in Postgres, which owns their current
+-- state. What lands here is the history of that state changing -- one
+-- append-only row per transition, never revised. That is the shape the analyst
+-- views want anyway: "how many applications reached approved, by week and
+-- locale" is a scan, not a lookup.
+--
+-- Deliberately no `answers`. Those are what someone wrote about their own
+-- household, and they stay in Postgres behind the app.
+CREATE TABLE IF NOT EXISTS sffood.application_events
 (
+    event_id        UUID,
     application_id  UUID,
     phone_hash      String,
     program_id      String,
     status          LowCardinality(String),  -- submitted|in_review|approved|denied|withdrawn
-    answers         String DEFAULT '{}',     -- JSON, keyed by field key
-    note            String DEFAULT '',
-    locale          LowCardinality(String) DEFAULT '',
-    created_at      DateTime64(3, 'UTC'),
-    updated_at      DateTime64(3, 'UTC')
+    locale          LowCardinality(String),
+    created_at      DateTime64(3, 'UTC')
 )
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY application_id;
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(created_at)
+ORDER BY (program_id, created_at);
 
-CREATE OR REPLACE VIEW sffood.v_applications AS
-SELECT application_id, phone_hash, program_id, status, locale, created_at, updated_at
-FROM sffood.applications FINAL;
-
--- Answers can contain what someone wrote about their own household. Analysts
--- get counts and statuses; the free text stays out of the view.
 CREATE OR REPLACE VIEW sffood.v_application_funnel AS
 SELECT toDate(created_at) AS day,
        program_id,
        locale,
        status,
        count() AS applications
-FROM sffood.applications FINAL
+FROM sffood.application_events
 GROUP BY day, program_id, locale, status;
-
--- ---------------------------------------------------------------------------
--- Accessibility
--- ---------------------------------------------------------------------------
--- Our own data is authoritative here. Google knows a venue's front door; it
--- does not know that the pantry runs out of the step-free side entrance on
--- Thursdays. Vocabulary: wheelchair | step_free | accessible_restroom |
--- seating | near_transit | parking | asl | service_animal_ok
---
--- An absent tag means UNKNOWN, never "no". The UI must not render a missing
--- tag as inaccessible.
-ALTER TABLE sffood.pantries
-    ADD COLUMN IF NOT EXISTS access_tags Array(LowCardinality(String)) DEFAULT [];
-
-ALTER TABLE sffood.pantry_events
-    ADD COLUMN IF NOT EXISTS access_tags Array(LowCardinality(String)) DEFAULT [];
-
-CREATE OR REPLACE VIEW sffood.v_upcoming_events AS
-SELECT event_id, pantry_id, title, starts_at, ends_at, zip, lat, lon, address,
-       languages, tags, notes, requirements, access_tags, source
-FROM sffood.pantry_events FINAL
-WHERE cancelled = 0
-  AND ends_at > now();
-
--- ---------------------------------------------------------------------------
--- Eligibility screening
--- ---------------------------------------------------------------------------
-
--- One row per person, replaced as they answer. `answers` is the only place raw
--- screening answers exist, and it is deliberately short-lived: the column TTL
--- blanks it two days after the last reply, and completeScreening() clears it
--- the moment the routing is computed. What survives is `flags` (coarse
--- categories like senior or has_kids) and `referrals` (which programs the
--- person was pointed at) — enough to report on, not enough to profile.
---
--- Immigration status is never asked as a routing gate, and the one optional
--- CalFresh citizenship branch is stripped in lib/screenings.ts before any
--- write, so it cannot appear in this table even transiently.
-CREATE TABLE IF NOT EXISTS sffood.screenings
-(
-    phone_hash  String,
-    locale      LowCardinality(String),
-    status      LowCardinality(String),  -- in_progress|complete|abandoned
-    answers     String DEFAULT '' TTL toDateTime(updated_at) + INTERVAL 2 DAY,
-    flags       Array(LowCardinality(String)) DEFAULT [],
-    referrals   Array(LowCardinality(String)) DEFAULT [],
-    misses      UInt8 DEFAULT 0,         -- consecutive unparsed replies
-    started_at  DateTime64(3, 'UTC'),
-    updated_at  DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY phone_hash
-TTL toDateTime(updated_at) + INTERVAL 400 DAY;
-
--- Which programs the screening sends people to, and where it stalls. No
--- answers, no flags per person — the analyst sees rates, not people.
-CREATE OR REPLACE VIEW sffood.v_screening_outcomes AS
-SELECT toDate(started_at) AS day,
-       locale,
-       status,
-       count()                                   AS screenings,
-       countIf(has(referrals, 'calfresh'))       AS to_calfresh,
-       countIf(has(referrals, 'wic'))            AS to_wic,
-       countIf(has(referrals, 'csfp'))           AS to_senior_box,
-       countIf(has(referrals, 'sun_bucks'))      AS to_sun_bucks,
-       countIf(has(referrals, 'hdg'))            AS to_delivery,
-       countIf(has(referrals, 'rmp'))            AS to_restaurant_meals,
-       countIf(length(referrals) <= 1)           AS nothing_beyond_pantries
-FROM sffood.screenings FINAL
-GROUP BY day, locale, status;
