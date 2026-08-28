@@ -1,0 +1,13 @@
+# Drop into a LibreChat checkout alongside its own docker-compose.yml:
+#   cp librechat/docker-compose.override.yml <librechat>/docker-compose.override.yml
+#   cp librechat/librechat.yaml              <librechat>/librechat.yaml
+#   docker compose up -d
+services:
+  api:
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml
+    environment:
+      # uvx is needed to launch the ClickHouse MCP server on demand.
+      - UV_CACHE_DIR=/tmp/uv-cache
+    env_file:
+      - .env

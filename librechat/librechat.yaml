@@ -1,0 +1,87 @@
+# LibreChat — internal analyst surface for the SF FOOD ClickHouse database.
+#
+# This is staff tooling, not the participant-facing product. Participants only
+# ever touch SMS. Analysts here ask questions in plain language and the model
+# writes SQL against the read-only views.
+#
+# Docs: https://www.librechat.ai/docs/configuration/librechat_yaml
+version: 1.2.8
+cache: true
+
+interface:
+  modelSelect: true
+  parameters: true
+  presets: true
+  agents: true
+  privacyPolicy:
+    externalUrl: "https://example.org/privacy"
+    openNewTab: true
+
+# Gemini via Google's OpenAI-compatible endpoint. Defined as a custom endpoint
+# (rather than the built-in `google` one) so the model list is pinned here in
+# config instead of drifting with an env var.
+endpoints:
+  custom:
+    - name: "Gemini"
+      apiKey: "${GOOGLE_API_KEY}"
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai"
+      models:
+        default:
+          - "${GEMINI_MODEL}"
+        fetch: false
+      titleConvo: true
+      titleModel: "${GEMINI_MODEL}"
+      modelDisplayLabel: "Gemini"
+      summarize: false
+      forcePrompt: false
+
+  agents:
+    recursionLimit: 25
+    allowedProviders:
+      - "Gemini"
+
+mcpServers:
+  # Official ClickHouse MCP server. `uvx` fetches it on first run — no local
+  # install step. Credentials come from the LibreChat container env.
+  clickhouse:
+    type: stdio
+    command: uvx
+    args:
+      - "mcp-clickhouse"
+    env:
+      CLICKHOUSE_HOST: "${CLICKHOUSE_HOST}"
+      CLICKHOUSE_PORT: "8443"
+      CLICKHOUSE_USER: "${CLICKHOUSE_ANALYST_USER}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_ANALYST_PASSWORD}"
+      CLICKHOUSE_SECURE: "true"
+      CLICKHOUSE_VERIFY: "true"
+      CLICKHOUSE_DATABASE: "sffood"
+    timeout: 60000
+    chatMenu: true
+    serverInstructions: |
+      You are querying the SF FOOD ClickHouse database (database: sffood).
+
+      Query the v_* views by default:
+        v_subscribers    one row per person: locale, zip, household_bucket,
+                         needs, status, created_at, confirmed_at, stopped_at
+        v_daily_signups  started / confirmed / stopped, by day, locale, zip
+        v_funnel         onboarding drop-off by day, locale, step
+        v_sms_cost       message and segment counts by day, locale, encoding
+        v_upcoming_events  scheduled distributions that have not ended:
+                         title, starts_at, ends_at, zip, lat, lon, tags
+        pantries         standing distribution sites (curated)
+        places_cache     raw Google Places responses. Operational only — it is
+                         cached third-party content, not our data. Do not build
+                         reports on it, and do not export it.
+
+      Rules:
+      - phone_hash is an HMAC, not a phone number. It cannot be reversed, and
+        there is no table in this database that maps it back to one.
+      - Never select phone_enc. Never attempt to decrypt anything.
+      - Report cohorts, not individuals. If a grouping returns fewer than 10
+        people, say the cell is too small rather than showing it.
+      - subscribers and pantries use ReplacingMergeTree — always read the views
+        (which apply FINAL) rather than the base tables.
+      - This is data about food-insecure people. Aggregate analysis of program
+        performance is in scope. Anything that would single out one household,
+        or that supports selling individual-level records, is not.

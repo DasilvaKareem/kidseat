@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/*
+  Design floor for this app: a five-year-old Android, a cracked screen, bright
+  sunlight, one thumb. Everything below is sized for that, not for a desktop.
+*/
+@theme {
+  --color-canvas: #fdfaf5;
+  --color-surface: #ffffff;
+  --color-ink: #1b1714;
+  --color-muted: #5e5750;
+  --color-line: #e2d9cc;
+  --color-brand: #14663f;
+  --color-brand-ink: #0e4a2d;
+  --color-danger: #a3231b;
+  --color-focus: #1d4ed8;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 18px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One visible focus treatment everywhere, keyboard and switch-control alike. */
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

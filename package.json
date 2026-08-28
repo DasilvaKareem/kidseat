@@ -1,0 +1,39 @@
+{
+  "name": "kidseat",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:push": "node --env-file-if-exists=.env.local scripts/db-push.mjs",
+    "db:seed": "node --env-file-if-exists=.env.local scripts/seed-pantries.mjs",
+    "db:import": "node --env-file-if-exists=.env.local scripts/import-pantries.mjs",
+    "check:sms": "node scripts/check-sms-length.mjs",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node --env-file-if-exists=.env.local scripts/smoke.mts",
+    "test": "npm run typecheck && npm run check:sms && npm run smoke"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "^4.0.87",
+    "@clickhouse/client": "^1.23.1",
+    "@vercel/config": "^0.7.0",
+    "@vis.gl/react-google-maps": "^1.9.0",
+    "ai": "^7.0.84",
+    "next": "16.3.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "^4.5.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.3",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
