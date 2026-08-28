@@ -5,7 +5,7 @@ import {
   FIND,
   LOCALES,
   LOCALE_LABELS,
-  fill,
+  plural,
   isLocale,
   type Locale,
 } from "@/lib/i18n";
@@ -32,6 +32,7 @@ export default function FindApp() {
   const [tags, setTags] = useState<string[]>([]);
   const [noId, setNoId] = useState(false);
   const [today, setToday] = useState(false);
+  const [accessible, setAccessible] = useState(false);
 
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [movedBounds, setMovedBounds] = useState<Bounds | null>(null);
@@ -86,8 +87,11 @@ export default function FindApp() {
     else setApplications([]);
   }, [signedIn, refreshApplications]);
 
+  const requestSeq = useRef(0);
+
   const load = useCallback(
     async (b: Bounds | null) => {
+      const seq = ++requestSeq.current;
       setLoading(true);
       try {
         const params = new URLSearchParams({
@@ -96,6 +100,7 @@ export default function FindApp() {
           tags: tags.join(","),
           no_id: noId ? "1" : "0",
           today: today ? "1" : "0",
+          accessible: accessible ? "1" : "0",
         });
         if (b) {
           params.set("north", String(b.north));
@@ -105,14 +110,18 @@ export default function FindApp() {
         }
         const res = await fetch(`/api/map?${params}`);
         const json = (await res.json()) as { items?: MapItem[] };
+        // A response that is no longer the newest is dropped, not rendered:
+        // otherwise the initial English fetch can land after the restored
+        // locale's fetch and repaint the list in the wrong language.
+        if (seq !== requestSeq.current) return;
         setItems(json.items ?? []);
       } catch {
-        setItems([]);
+        if (seq === requestSeq.current) setItems([]);
       } finally {
-        setLoading(false);
+        if (seq === requestSeq.current) setLoading(false);
       }
     },
-    [locale, kinds, tags, noId, today],
+    [locale, kinds, tags, noId, today, accessible],
   );
 
   // Filters re-query immediately; panning does not, so nobody burns mobile data
@@ -120,7 +129,7 @@ export default function FindApp() {
   useEffect(() => {
     void load(bounds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale, kinds, tags, noId, today]);
+  }, [locale, kinds, tags, noId, today, accessible]);
 
   const boundsRef = useRef<Bounds | null>(null);
   const onBounds = useCallback((b: Bounds) => {
@@ -212,6 +221,9 @@ export default function FindApp() {
         <button onClick={() => setNoId(!noId)} className={chip(noId)}>
           {t.filters.noId}
         </button>
+        <button onClick={() => setAccessible(!accessible)} className={chip(accessible)}>
+          {t.access.filter}
+        </button>
         {TAG_FILTERS.map((tag) => (
           <button key={tag} onClick={() => setTags(toggle(tags, tag))} className={chip(tags.includes(tag))}>
             {t.tagLabels[tag] ?? tag}
@@ -243,7 +255,7 @@ export default function FindApp() {
           ) : (
             <>
               <p className="border-b border-line px-5 py-3 text-[16px] font-semibold text-muted">
-                {loading ? t.loading : fill(t.places, { n: items.length })}
+                {loading ? t.loading : plural(locale, items.length, t.places)}
               </p>
               <div className="flex-1 overflow-y-auto pb-28">
                 <ResultsList

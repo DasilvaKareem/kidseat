@@ -222,12 +222,12 @@ export const COPY: Record<Locale, Copy> = {
 type FindCopy = {
   title: string;
   searchArea: string;
-  places: string;
+  places: { one: string; other: string };
   loading: string;
   none: string;
   filters: { pantries: string; events: string; today: string; noId: string; clear: string };
   tagLabels: Record<string, string>;
-  card: { programs: string; noId: string; bring: string; directions: string; call: string };
+  card: { programs: { one: string; other: string }; noId: string; bring: string; directions: string; call: string };
   apply: {
     action: string;
     applied: string;
@@ -258,13 +258,27 @@ type FindCopy = {
   chat: { placeholder: string; locked: string; send: string; title: string; intro: string };
   close: string;
   mapUnavailable: string;
+  directions: {
+    title: string;
+    walk: string; transit: string; drive: string; bike: string;
+    lessWalking: string; fewerTransfers: string;
+    minutes: string; openInMaps: string; noRoute: string;
+    useMyLocation: string; locationDenied: string;
+    board: string; getOff: string; fare: string; caveat: string;
+  };
+  access: {
+    title: string;
+    unknown: string;
+    filter: string;
+    labels: Record<string, string>;
+  };
 };
 
 export const FIND: Record<Locale, FindCopy> = {
   en: {
     title: "Free food near you",
     searchArea: "Search this area",
-    places: "{n} places",
+    places: { one: "1 place", other: "{n} places" },
     loading: "Loading…",
     none: "Nothing in this area. Try zooming out or clearing filters.",
     filters: { pantries: "Pantries", events: "Events", today: "Today", noId: "No ID needed", clear: "Clear" },
@@ -272,7 +286,7 @@ export const FIND: Record<Locale, FindCopy> = {
       shelf_stable: "Shelf-stable", prepared: "Hot meals", delivery: "Delivery",
       halal: "Halal", kosher: "Kosher", baby: "Baby food",
     },
-    card: { programs: "{n} programs", noId: "No ID needed", bring: "Bring: {x}", directions: "Directions", call: "Call" },
+    card: { programs: { one: "1 program", other: "{n} programs" }, noId: "No ID needed", bring: "Bring: {x}", directions: "Directions", call: "Call" },
     apply: {
       action: "Apply",
       applied: "Applied",
@@ -309,11 +323,35 @@ export const FIND: Record<Locale, FindCopy> = {
     },
     close: "Close",
     mapUnavailable: "Map is not configured. The list still works.",
+  directions: {
+    title: "Directions",
+    walk: "Walk", transit: "Transit", drive: "Drive", bike: "Bike",
+    lessWalking: "Less walking", fewerTransfers: "Fewer transfers",
+    minutes: "{n} min", openInMaps: "Open in Google Maps",
+    noRoute: "We couldn't build a route. Open it in Google Maps instead.",
+    useMyLocation: "Use my location",
+    locationDenied: "Location is off, so this uses your ZIP code.",
+    board: "Take {line} toward {headsign}",
+    getOff: "Get off at {stop}",
+    fare: "Fare about {x}",
+    caveat: "\"Less walking\" is not the same as a step-free route. Call ahead if you need one.",
+  },
+  access: {
+    title: "Accessibility",
+    unknown: "Not listed — call to check",
+    filter: "Wheelchair access",
+    labels: {
+      wheelchair: "Wheelchair accessible", step_free: "No steps",
+      accessible_restroom: "Accessible restroom", seating: "Seating available",
+      near_transit: "Near transit", parking: "Accessible parking",
+      asl: "ASL available", service_animal_ok: "Service animals welcome",
+    },
+  },
   },
   "zh-Hans": {
     title: "附近的免费食物",
     searchArea: "搜索此区域",
-    places: "{n} 个地点",
+    places: { one: "{n} 个地点", other: "{n} 个地点" },
     loading: "加载中…",
     none: "此区域没有结果。请缩小地图或清除筛选。",
     filters: { pantries: "食物领取点", events: "发放活动", today: "今天", noId: "无需证件", clear: "清除" },
@@ -321,7 +359,7 @@ export const FIND: Record<Locale, FindCopy> = {
       shelf_stable: "常温食品", prepared: "熟食", delivery: "送货上门",
       halal: "清真", kosher: "洁食", baby: "婴儿食品",
     },
-    card: { programs: "{n} 个项目", noId: "无需证件", bring: "请携带：{x}", directions: "路线", call: "拨打电话" },
+    card: { programs: { one: "{n} 个项目", other: "{n} 个项目" }, noId: "无需证件", bring: "请携带：{x}", directions: "路线", call: "拨打电话" },
     apply: {
       action: "申请",
       applied: "已申请",
@@ -358,11 +396,35 @@ export const FIND: Record<Locale, FindCopy> = {
     },
     close: "关闭",
     mapUnavailable: "地图尚未配置。列表仍可使用。",
+  directions: {
+    title: "路线",
+    walk: "步行", transit: "公共交通", drive: "开车", bike: "骑车",
+    lessWalking: "少走路", fewerTransfers: "少换乘",
+    minutes: "{n} 分钟", openInMaps: "在谷歌地图中打开",
+    noRoute: "无法生成路线。请在谷歌地图中打开。",
+    useMyLocation: "使用我的位置",
+    locationDenied: "定位已关闭，将使用您的邮政编码。",
+    board: "乘坐 {line}，方向 {headsign}",
+    getOff: "在 {stop} 下车",
+    fare: "车费约 {x}",
+    caveat: "“少走路”不等于无台阶路线。如有需要请提前致电确认。",
+  },
+  access: {
+    title: "无障碍设施",
+    unknown: "未标注 — 请致电确认",
+    filter: "轮椅通道",
+    labels: {
+      wheelchair: "轮椅可通行", step_free: "无台阶",
+      accessible_restroom: "无障碍卫生间", seating: "有座位",
+      near_transit: "靠近公交站", parking: "无障碍停车位",
+      asl: "提供手语", service_animal_ok: "可携带服务犬",
+    },
+  },
   },
   es: {
     title: "Comida gratis cerca de usted",
     searchArea: "Buscar en esta área",
-    places: "{n} lugares",
+    places: { one: "1 lugar", other: "{n} lugares" },
     loading: "Cargando…",
     none: "No hay nada en esta área. Aleje el mapa o quite los filtros.",
     filters: { pantries: "Despensas", events: "Eventos", today: "Hoy", noId: "Sin identificación", clear: "Quitar" },
@@ -370,7 +432,7 @@ export const FIND: Record<Locale, FindCopy> = {
       shelf_stable: "No perecedero", prepared: "Comida caliente", delivery: "Entrega",
       halal: "Halal", kosher: "Kosher", baby: "Comida de bebé",
     },
-    card: { programs: "{n} programas", noId: "No necesita identificación", bring: "Traiga: {x}", directions: "Cómo llegar", call: "Llamar" },
+    card: { programs: { one: "1 programa", other: "{n} programas" }, noId: "No necesita identificación", bring: "Traiga: {x}", directions: "Cómo llegar", call: "Llamar" },
     apply: {
       action: "Solicitar",
       applied: "Solicitado",
@@ -407,8 +469,46 @@ export const FIND: Record<Locale, FindCopy> = {
     },
     close: "Cerrar",
     mapUnavailable: "El mapa no está configurado. La lista sigue funcionando.",
+  directions: {
+    title: "Cómo llegar",
+    walk: "Caminando", transit: "Transporte", drive: "En carro", bike: "En bici",
+    lessWalking: "Caminar menos", fewerTransfers: "Menos transbordos",
+    minutes: "{n} min", openInMaps: "Abrir en Google Maps",
+    noRoute: "No pudimos crear una ruta. Ábrala en Google Maps.",
+    useMyLocation: "Usar mi ubicación",
+    locationDenied: "La ubicación está apagada; usamos su código postal.",
+    board: "Tome el {line} hacia {headsign}",
+    getOff: "Bájese en {stop}",
+    fare: "Pasaje aproximado {x}",
+    caveat: "\"Caminar menos\" no es lo mismo que una ruta sin escalones. Llame antes si la necesita.",
+  },
+  access: {
+    title: "Accesibilidad",
+    unknown: "No indicado — llame para confirmar",
+    filter: "Acceso en silla de ruedas",
+    labels: {
+      wheelchair: "Accesible en silla de ruedas", step_free: "Sin escalones",
+      accessible_restroom: "Baño accesible", seating: "Hay asientos",
+      near_transit: "Cerca del transporte", parking: "Estacionamiento accesible",
+      asl: "Lenguaje de señas", service_animal_ok: "Se permiten animales de servicio",
+    },
+  },
   },
 };
+
+/**
+ * Chinese has one form, English and Spanish have two. Intl.PluralRules picks
+ * the right bucket per locale rather than hardcoding an "n === 1" rule that is
+ * wrong somewhere.
+ */
+export function plural(
+  locale: Locale,
+  n: number,
+  forms: { one: string; other: string },
+): string {
+  const rule = new Intl.PluralRules(locale).select(n);
+  return fill(rule === "one" ? forms.one : forms.other, { n });
+}
 
 export function fill(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (m, k) => String(vars[k] ?? m));

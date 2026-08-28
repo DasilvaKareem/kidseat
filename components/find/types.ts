@@ -14,6 +14,7 @@ export type MapItem = {
   phone: string;
   pantry_id: string;
   program_count: number;
+  access_tags: string[];
 };
 
 export type ProgramField = {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FIND, fill, type Locale } from "@/lib/i18n";
+import Directions from "./directions";
 import type { MapItem, Program } from "./types";
 
 export default function DetailPanel({
@@ -72,15 +73,27 @@ export default function DetailPanel({
             : fill(t.card.bring, { x: item.requirements })}
         </p>
 
+        <section className="mt-4">
+          <h3 className="text-[16px] font-bold text-ink">{t.access.title}</h3>
+          {item.access_tags.length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {item.access_tags.map((a) => (
+                <li
+                  key={a}
+                  className="rounded-full border border-line px-3 py-1 text-[15px] text-ink"
+                >
+                  {t.access.labels[a] ?? a}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            // Never render unknown as "not accessible" — that decides for
+            // someone whether a trip is worth attempting.
+            <p className="mt-1 text-[16px] text-muted">{t.access.unknown}</p>
+          )}
+        </section>
+
         <div className="mt-4 flex gap-3">
-          <a
-            href={`https://maps.google.com/?q=${item.lat},${item.lon}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-h-[52px] flex-1 items-center justify-center rounded-2xl border-2 border-line text-[17px] font-semibold text-ink"
-          >
-            {t.card.directions}
-          </a>
           {item.phone && (
             <a
               href={`tel:${item.phone.replace(/[^\d+]/g, "")}`}
@@ -90,6 +103,8 @@ export default function DetailPanel({
             </a>
           )}
         </div>
+
+        <Directions dest={{ lat: item.lat, lon: item.lon }} locale={locale} />
 
         {programs === null ? (
           <p className="mt-6 text-[16px] text-muted">{t.loading}</p>

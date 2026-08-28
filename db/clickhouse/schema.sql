@@ -257,3 +257,26 @@ SELECT toDate(created_at) AS day,
        count() AS applications
 FROM sffood.applications FINAL
 GROUP BY day, program_id, locale, status;
+
+-- ---------------------------------------------------------------------------
+-- Accessibility
+-- ---------------------------------------------------------------------------
+-- Our own data is authoritative here. Google knows a venue's front door; it
+-- does not know that the pantry runs out of the step-free side entrance on
+-- Thursdays. Vocabulary: wheelchair | step_free | accessible_restroom |
+-- seating | near_transit | parking | asl | service_animal_ok
+--
+-- An absent tag means UNKNOWN, never "no". The UI must not render a missing
+-- tag as inaccessible.
+ALTER TABLE sffood.pantries
+    ADD COLUMN IF NOT EXISTS access_tags Array(LowCardinality(String)) DEFAULT [];
+
+ALTER TABLE sffood.pantry_events
+    ADD COLUMN IF NOT EXISTS access_tags Array(LowCardinality(String)) DEFAULT [];
+
+CREATE OR REPLACE VIEW sffood.v_upcoming_events AS
+SELECT event_id, pantry_id, title, starts_at, ends_at, zip, lat, lon, address,
+       languages, tags, notes, requirements, access_tags, source
+FROM sffood.pantry_events FINAL
+WHERE cancelled = 0
+  AND ends_at > now();

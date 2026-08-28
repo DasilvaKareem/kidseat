@@ -4,7 +4,16 @@ import type { Locale } from "./i18n";
 import { findNearby, type Match } from "./pantries";
 import { upcomingEvents, type EventMatch } from "./events";
 import { formatEventTime } from "./format-time";
-import { searchFoodPlaces, placeDetails, walkingTimes, mapsLink, mapsEnabled } from "./maps";
+import {
+  searchFoodPlaces,
+  placeDetails,
+  travelTimes,
+  computeRoute,
+  mapsLink,
+  directionsLink,
+  mapsEnabled,
+  type TravelMode,
+} from "./maps";
 
 // Routed through the Vercel AI Gateway, so the model is a plain
 // "provider/model" string and swapping models is an env change.
@@ -263,29 +272,94 @@ export function buildTools(ctx: Context) {
       },
     }),
 
-    walking_time: tool({
+    travel_time: tool({
       description:
-        "Real walking time from the person to up to 5 places. Worth calling " +
-        "when the person said travel is hard, or when two options are close " +
-        "in straight-line distance — hills and freeways make those very " +
-        "different walks.",
+        "Real travel time from the person to up to 5 places, by walking, " +
+        "transit, driving, or biking. Worth calling when the person said " +
+        "travel is hard, has no car, or when two options are close in " +
+        "straight-line distance — hills and bus routes make those very " +
+        "different trips.",
       inputSchema: z.object({
+        mode: z.enum(["WALK", "TRANSIT", "DRIVE", "BICYCLE"]).default("WALK"),
         places: z
           .array(z.object({ name: z.string(), lat: z.number(), lon: z.number() }))
           .min(1)
           .max(5),
       }),
-      execute: async ({ places }) => {
+      execute: async ({ places, mode }) => {
         if (!mapsEnabled()) return { error: "google_maps_not_configured" };
         if (ctx.lat == null || ctx.lon == null) {
           return { error: "no_coordinates_for_this_person" };
         }
-        const times = await walkingTimes({ lat: ctx.lat, lon: ctx.lon }, places);
+        const times = await travelTimes(
+          { lat: ctx.lat, lon: ctx.lon },
+          places,
+          mode as TravelMode,
+        );
         return places.map((p, i) => ({
           name: p.name,
-          walk_minutes: times[i]?.minutes ?? null,
+          mode,
+          minutes: times[i]?.minutes ?? null,
           meters: times[i]?.meters ?? null,
         }));
+      },
+    }),
+
+    get_directions: tool({
+      description:
+        "Step-by-step directions to one place. For TRANSIT this returns the " +
+        "actual bus or train line, the stop to wait at, and the departure " +
+        "time. Use it when someone asks how to get somewhere, or says they " +
+        "cannot walk far or have no car.",
+      inputSchema: z.object({
+        lat: z.number(),
+        lon: z.number(),
+        mode: z.enum(["WALK", "TRANSIT", "DRIVE", "BICYCLE"]).default("TRANSIT"),
+        transit_preference: z
+          .enum(["LESS_WALKING", "FEWER_TRANSFERS"])
+          .nullable()
+          .default(null)
+          .describe(
+            "TRANSIT only. LESS_WALKING is the right choice when the person " +
+              "said travel is hard. Note this is NOT a guarantee of a " +
+              "step-free or wheelchair-accessible route.",
+          ),
+      }),
+      execute: async ({ lat, lon, mode, transit_preference }) => {
+        if (!mapsEnabled()) return { error: "google_maps_not_configured" };
+        if (ctx.lat == null || ctx.lon == null) {
+          return { error: "no_coordinates_for_this_person" };
+        }
+        const route = await computeRoute({
+          origin: { lat: ctx.lat, lon: ctx.lon },
+          destination: { lat, lon },
+          mode: mode as TravelMode,
+          transitPreference: transit_preference,
+          locale: ctx.locale,
+        });
+        if (!route) {
+          return {
+            error: "no_route_found",
+            link: directionsLink({ lat, lon }, mode as TravelMode),
+          };
+        }
+        return {
+          mode: route.mode,
+          minutes: route.minutes,
+          miles: Number((route.meters / 1609.34).toFixed(1)),
+          fare: route.fare || null,
+          steps: route.steps.map((st) => ({
+            mode: st.mode,
+            instruction: st.instruction,
+            minutes: st.minutes,
+            line: st.line,
+            headsign: st.headsign,
+            board_at: st.departStop,
+            get_off_at: st.arriveStop,
+            departs: st.departTime,
+          })),
+          link: route.link,
+        };
       },
     }),
   };
@@ -341,6 +415,9 @@ export async function answerFoodRequest(opts: {
         needsNote,
         "Start with find_events. If that is empty, try find_pantries, then",
         "search_google_maps. Stop as soon as you have 1-3 good options.",
+        "If they said travel is hard or asked how to get there, call",
+        "get_directions with TRANSIT and LESS_WALKING, and give the line, the",
+        "stop, and the departure time — not just a distance.",
       ].join("\n"),
       prompt:
         opts.question?.trim() ||

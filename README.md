@@ -146,6 +146,38 @@ mobile pantries, weekly pop-ups, and holiday distributions with a real
 `starts_at`/`ends_at`, rendered in Pacific time as "Today 2 PM-4 PM" in the
 person's language.
 
+### Directions, transit, and accessibility
+
+The detail panel offers Walk / Transit / Drive / Bike via the Routes API, and
+for transit the two preferences Google actually exposes: **Less walking** and
+**Fewer transfers**.
+
+**Google's Routes API has no wheelchair-accessible transit filter** — the
+consumer Maps app has one, the API does not. So the UI says plainly that "less
+walking" is not the same as a step-free route, and tells people to call ahead if
+they need one. Do not let that caveat get edited out.
+
+Accessibility comes from two places:
+
+- **`access_tags` on our own rows** — `wheelchair`, `step_free`,
+  `accessible_restroom`, `seating`, `near_transit`, `parking`, `asl`,
+  `service_animal_ok`. This is authoritative: Google knows a venue's front door,
+  it does not know the pantry runs out of the step-free side entrance.
+- **Places `accessibilityOptions`** — entrance, parking, restroom, seating —
+  used to enrich sites we have not curated.
+
+**An absent tag means unknown, never "no."** The UI renders "Not listed — call
+to check", and the accessibility filter only ever shows places that positively
+claim access. Rendering unknown as inaccessible decides for someone whether a
+trip is worth attempting, which is not our call to make.
+
+`/api/directions` is a POST, not a GET, because the body carries the person's
+live coordinates and those do not belong in a URL that lands in access logs and
+browser history. Location is requested only on an explicit tap, never on mount,
+and falls back to the ZIP centroid when refused. If the Routes API is
+unavailable the endpoint still returns a working Google Maps deep link with the
+travel mode preselected — the Maps app knows where they are even when we do not.
+
 ### Maps cost and caching
 
 Places responses are cached in ClickHouse — 24h for searches, 7 days for place

@@ -1,6 +1,6 @@
 "use client";
 
-import { FIND, fill, type Locale } from "@/lib/i18n";
+import { FIND, plural, type Locale } from "@/lib/i18n";
 import type { MapItem } from "./types";
 
 function Badge({
@@ -96,7 +96,7 @@ export default function ResultsList({
                 {noId && <Badge tone="neutral">{t.card.noId}</Badge>}
                 {item.program_count > 0 && (
                   <Badge tone="quiet">
-                    {fill(t.card.programs, { n: item.program_count })}
+                    {plural(locale, item.program_count, t.card.programs)}
                   </Badge>
                 )}
                 {item.program_count > 0 && (

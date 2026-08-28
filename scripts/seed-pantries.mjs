@@ -23,6 +23,7 @@ const rows = [
     lat: 37.7599, lon: -122.4148, phone: "", hours: "Tue & Thu, 10am-1pm",
     open_days: [2, 4], languages: ["en", "es"],
     tags: ["shelf_stable", "baby"], requirements: "", active: 1,
+    access_tags: ["wheelchair", "step_free", "accessible_restroom"],
     source: "dev-seed", updated_at: now,
   },
   {
@@ -31,6 +32,7 @@ const rows = [
     lat: 37.7941, lon: -122.4078, phone: "", hours: "Daily, 11:30am-1pm",
     open_days: [0, 1, 2, 3, 4, 5, 6], languages: ["en", "zh-Hans"],
     tags: ["prepared", "shelf_stable"], requirements: "", active: 1,
+    access_tags: [],
     source: "dev-seed", updated_at: now,
   },
   {
@@ -39,6 +41,7 @@ const rows = [
     lat: 37.7835, lon: -122.4152, phone: "", hours: "Wed, home delivery",
     open_days: [3], languages: ["en", "es", "zh-Hans"],
     tags: ["delivery", "shelf_stable", "halal"], requirements: "", active: 1,
+    access_tags: ["wheelchair", "near_transit", "asl"],
     source: "dev-seed", updated_at: now,
   },
 ];
@@ -60,6 +63,7 @@ const events = [
     starts_at: iso(3), ends_at: iso(6), zip: "94110",
     lat: 37.7599, lon: -122.4148, address: "000 Example St (NOT A REAL SITE)",
     languages: ["en", "es"], tags: ["shelf_stable", "baby"],
+    access_tags: ["wheelchair", "step_free"],
     notes: "Bring a bag if you have one", requirements: "", cancelled: 0,
     source: "dev-seed", updated_at: now,
   },
@@ -69,6 +73,7 @@ const events = [
     starts_at: iso(20), ends_at: iso(22), zip: "94108",
     lat: 37.7941, lon: -122.4078, address: "000 Example Ave (NOT A REAL SITE)",
     languages: ["en", "zh-Hans"], tags: ["prepared"],
+    access_tags: ["seating", "near_transit"],
     notes: "", requirements: "", cancelled: 0,
     source: "dev-seed", updated_at: now,
   },
@@ -78,6 +83,7 @@ const events = [
     starts_at: iso(44), ends_at: iso(50), zip: "94102",
     lat: 37.7835, lon: -122.4152, address: "000 Example Blvd (NOT A REAL SITE)",
     languages: ["en", "es", "zh-Hans"], tags: ["delivery", "shelf_stable", "halal"],
+    access_tags: ["wheelchair"],
     notes: "Call ahead to be added to the route", requirements: "", cancelled: 0,
     source: "dev-seed", updated_at: now,
   },

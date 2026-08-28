@@ -19,9 +19,14 @@ export type MapItem = {
   phone: string;
   pantry_id: string;
   program_count: number;
+  access_tags: string[];
 };
 
+// Number(null) is 0 and Number.isFinite(0) is true, so a missing parameter
+// must be rejected before it ever reaches Number() — otherwise every absent
+// bound silently becomes 0 and the viewport query matches nothing.
 const num = (v: string | null, fallback: number) => {
+  if (v === null || v.trim() === "") return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
@@ -47,6 +52,7 @@ export async function GET(req: Request) {
   const tags = (p.get("tags") ?? "").split(",").filter(Boolean);
   const noId = p.get("no_id") === "1";
   const today = p.get("today") === "1";
+  const accessible = p.get("accessible") === "1";
   const dow = new Date().getDay();
 
   const wantPantries = kinds.includes("pantry");
@@ -57,7 +63,7 @@ export async function GET(req: Request) {
       wantPantries
         ? query<any>(
             `SELECT pantry_id, name, address, zip, lat, lon, phone, hours,
-                    open_days, languages, tags, requirements
+                    open_days, languages, tags, requirements, access_tags
              FROM pantries FINAL
              WHERE active = 1
                AND lat BETWEEN {south:Float64} AND {north:Float64}
@@ -69,9 +75,12 @@ export async function GET(req: Request) {
         : Promise.resolve([]),
       wantEvents
         ? query<any>(
-            `SELECT event_id, pantry_id, title, toString(starts_at) AS starts_at,
-                    toString(ends_at) AS ends_at, zip, lat, lon, address,
-                    languages, tags, requirements
+            // Aliases must NOT reuse the column names: ClickHouse resolves an
+            // alias inside WHERE/ORDER BY, so `AS starts_at` would make the
+            // range filter compare a String to a DateTime and throw.
+            `SELECT event_id, pantry_id, title, toString(starts_at) AS starts_text,
+                    toString(ends_at) AS ends_text, zip, lat, lon, address,
+                    languages, tags, requirements, access_tags
              FROM v_upcoming_events
              WHERE lat BETWEEN {south:Float64} AND {north:Float64}
                AND lon BETWEEN {west:Float64} AND {east:Float64}
@@ -106,6 +115,7 @@ export async function GET(req: Request) {
         phone: r.phone ?? "",
         pantry_id: r.pantry_id,
         program_count: counts.get(r.pantry_id) ?? 0,
+        access_tags: r.access_tags ?? [],
       })),
       ...events.map((r) => ({
         id: `event:${r.event_id}`,
@@ -115,19 +125,28 @@ export async function GET(req: Request) {
         zip: r.zip,
         lat: r.lat,
         lon: r.lon,
-        when: formatEventTime(r.starts_at, r.ends_at, locale),
-        starts_at: r.starts_at,
+        when: formatEventTime(r.starts_text, r.ends_text, locale),
+        starts_at: r.starts_text,
         tags: r.tags ?? [],
         languages: r.languages ?? [],
         requirements: r.requirements ?? "",
         phone: "",
         pantry_id: r.pantry_id ?? "",
         program_count: counts.get(r.pantry_id) ?? 0,
+        access_tags: r.access_tags ?? [],
       })),
     ];
 
     const filtered = items.filter((i) => {
       if (noId && i.requirements.trim() !== "") return false;
+      // An absent tag means unknown, so filtering to "accessible" can only ever
+      // show places that positively claim it — never a guess.
+      if (
+        accessible &&
+        !i.access_tags.some((a) => a === "wheelchair" || a === "step_free")
+      ) {
+        return false;
+      }
       if (tags.length > 0 && !tags.some((t) => i.tags.includes(t))) return false;
       return true;
     });

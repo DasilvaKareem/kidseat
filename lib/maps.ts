@@ -30,6 +30,16 @@ export type Place = {
   open_now: boolean | null;
   today_hours: string;
   week_hours: string[];
+  access: Access;
+};
+
+// Google reports these per place. Absent means "unknown", which is NOT the same
+// as "no" — never render a missing value as inaccessible.
+export type Access = {
+  entrance: boolean | null;
+  parking: boolean | null;
+  restroom: boolean | null;
+  seating: boolean | null;
 };
 
 function apiKey(): string {
@@ -94,6 +104,12 @@ function toPlace(p: Record<string, any>, day: number): Place {
     open_now: typeof hours.openNow === "boolean" ? hours.openNow : null,
     today_hours: descriptions[(day + 6) % 7] ?? "",
     week_hours: descriptions,
+    access: {
+      entrance: p.accessibilityOptions?.wheelchairAccessibleEntrance ?? null,
+      parking: p.accessibilityOptions?.wheelchairAccessibleParking ?? null,
+      restroom: p.accessibilityOptions?.wheelchairAccessibleRestroom ?? null,
+      seating: p.accessibilityOptions?.wheelchairAccessibleSeating ?? null,
+    },
   };
 }
 
@@ -132,6 +148,7 @@ export async function searchFoodPlaces(opts: {
         "places.nationalPhoneNumber",
         "places.websiteUri",
         "places.regularOpeningHours",
+        "places.accessibilityOptions",
         "places.businessStatus",
       ].join(","),
     },
@@ -186,6 +203,7 @@ export async function placeDetails(
           "nationalPhoneNumber",
           "websiteUri",
           "regularOpeningHours",
+          "accessibilityOptions",
           "businessStatus",
         ].join(","),
       },
@@ -204,6 +222,16 @@ export async function placeDetails(
 
 // --- travel time ------------------------------------------------------------
 
+export type TravelMode = "WALK" | "TRANSIT" | "DRIVE" | "BICYCLE";
+
+/**
+ * Transit routing preference. Google's Routes API does NOT expose the
+ * "wheelchair accessible" transit filter that the consumer Maps app has, so
+ * LESS_WALKING is the closest real lever we have — combined with the per-place
+ * accessibility attributes above. Do not advertise this as step-free routing.
+ */
+export type TransitPreference = "LESS_WALKING" | "FEWER_TRANSFERS" | null;
+
 export type Travel = { minutes: number | null; meters: number | null };
 
 /**
@@ -211,9 +239,10 @@ export type Travel = { minutes: number | null; meters: number | null };
  * who said travel is hard, the difference between 0.4 miles and a 22-minute
  * walk is the difference between going and not going.
  */
-export async function walkingTimes(
+export async function travelTimes(
   origin: { lat: number; lon: number },
   destinations: Array<{ lat: number; lon: number }>,
+  mode: TravelMode = "WALK",
 ): Promise<Travel[]> {
   const empty: Travel[] = destinations.map(() => ({ minutes: null, meters: null }));
   if (destinations.length === 0) return [];
@@ -240,7 +269,7 @@ export async function walkingTimes(
             location: { latLng: { latitude: d.lat, longitude: d.lon } },
           },
         })),
-        travelMode: "WALK",
+        travelMode: mode,
       }),
       signal: AbortSignal.timeout(6000),
     });
@@ -270,5 +299,160 @@ export async function walkingTimes(
   } catch (err) {
     console.error("[maps] computeRouteMatrix threw", err);
     return empty;
+  }
+}
+
+// --- directions -------------------------------------------------------------
+
+const COMPUTE_ROUTES = "https://routes.googleapis.com/directions/v2:computeRoutes";
+
+export type RouteStep = {
+  mode: TravelMode | "OTHER";
+  instruction: string;
+  meters: number;
+  minutes: number;
+  // Transit legs only. `line` is what someone actually looks for on a sign.
+  line?: string;
+  headsign?: string;
+  departStop?: string;
+  arriveStop?: string;
+  departTime?: string;
+  stops?: number;
+};
+
+export type Route = {
+  mode: TravelMode;
+  minutes: number;
+  meters: number;
+  fare: string;
+  steps: RouteStep[];
+  link: string;
+};
+
+const URL_MODE: Record<TravelMode, string> = {
+  WALK: "walking",
+  TRANSIT: "transit",
+  DRIVE: "driving",
+  BICYCLE: "bicycling",
+};
+
+/** Official Maps URLs deep link — hands off to the app the person already has. */
+export function directionsLink(
+  dest: { lat: number; lon: number },
+  mode: TravelMode = "WALK",
+  origin?: { lat: number; lon: number },
+): string {
+  const params = new URLSearchParams({
+    api: "1",
+    destination: `${dest.lat.toFixed(5)},${dest.lon.toFixed(5)}`,
+    travelmode: URL_MODE[mode],
+  });
+  if (origin) params.set("origin", `${origin.lat.toFixed(5)},${origin.lon.toFixed(5)}`);
+  return `https://www.google.com/maps/dir/?${params}`;
+}
+
+const STEP_MODES: TravelMode[] = ["WALK", "TRANSIT", "DRIVE", "BICYCLE"];
+
+function toStep(raw: Record<string, any>): RouteStep {
+  const mode = STEP_MODES.includes(raw.travelMode) ? (raw.travelMode as TravelMode) : "OTHER";
+  const seconds = Number(String(raw.staticDuration ?? "0s").replace("s", ""));
+  const td = raw.transitDetails;
+  return {
+    mode,
+    instruction: raw.navigationInstruction?.instructions ?? "",
+    meters: raw.distanceMeters ?? 0,
+    minutes: Number.isFinite(seconds) ? Math.round(seconds / 60) : 0,
+    ...(td
+      ? {
+          line: td.transitLine?.nameShort ?? td.transitLine?.name ?? "",
+          headsign: td.headsign ?? "",
+          departStop: td.stopDetails?.departureStop?.name ?? "",
+          arriveStop: td.stopDetails?.arrivalStop?.name ?? "",
+          departTime: td.stopDetails?.departureTime ?? "",
+          stops: td.stopCount ?? undefined,
+        }
+      : {}),
+  };
+}
+
+/**
+ * One route, with turn-by-turn (or stop-by-stop) detail.
+ *
+ * `transitPreference` only applies to TRANSIT — the API rejects it on other
+ * modes. Returns null rather than throwing so a failed route never blocks the
+ * rest of the page; the deep link still works without us.
+ */
+export async function computeRoute(opts: {
+  origin: { lat: number; lon: number };
+  destination: { lat: number; lon: number };
+  mode: TravelMode;
+  transitPreference?: TransitPreference;
+  locale: Locale;
+  departureTime?: string;
+}): Promise<Route | null> {
+  const { origin, destination, mode } = opts;
+
+  const body: Record<string, unknown> = {
+    origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lon } } },
+    destination: {
+      location: { latLng: { latitude: destination.lat, longitude: destination.lon } },
+    },
+    travelMode: mode,
+    languageCode: LANG[opts.locale],
+    units: "IMPERIAL",
+  };
+
+  if (mode === "TRANSIT") {
+    body.transitPreferences = {
+      allowedTravelModes: ["BUS", "SUBWAY", "TRAIN", "LIGHT_RAIL", "RAIL"],
+      ...(opts.transitPreference ? { routingPreference: opts.transitPreference } : {}),
+    };
+    if (opts.departureTime) body.departureTime = opts.departureTime;
+  }
+
+  try {
+    const res = await fetch(COMPUTE_ROUTES, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey(),
+        "X-Goog-FieldMask": [
+          "routes.duration",
+          "routes.distanceMeters",
+          "routes.legs.steps.navigationInstruction",
+          "routes.legs.steps.travelMode",
+          "routes.legs.steps.distanceMeters",
+          "routes.legs.steps.staticDuration",
+          "routes.legs.steps.transitDetails",
+          "routes.travelAdvisory.transitFare",
+        ].join(","),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      console.error("[maps] computeRoutes failed", res.status, await res.text());
+      return null;
+    }
+
+    const json = (await res.json()) as { routes?: Record<string, any>[] };
+    const route = json.routes?.[0];
+    if (!route) return null;
+
+    const seconds = Number(String(route.duration ?? "0s").replace("s", ""));
+    const fare = route.travelAdvisory?.transitFare;
+
+    return {
+      mode,
+      minutes: Number.isFinite(seconds) ? Math.round(seconds / 60) : 0,
+      meters: route.distanceMeters ?? 0,
+      fare: fare ? `${fare.currencyCode ?? ""} ${fare.units ?? "0"}`.trim() : "",
+      steps: (route.legs?.[0]?.steps ?? []).map(toStep).filter((s: RouteStep) => s.instruction || s.line),
+      link: directionsLink(destination, mode, origin),
+    };
+  } catch (err) {
+    console.error("[maps] computeRoutes threw", err);
+    return null;
   }
 }

@@ -1,4 +1,4 @@
-import { query } from "./clickhouse";
+import { pgQuery } from "./postgres";
 import { milesBetween } from "./geo";
 
 export type Pantry = {
@@ -42,13 +42,13 @@ export async function findNearby(opts: {
   const radius = opts.radiusMiles ?? (opts.needs.includes("low_mobility") ? 0.75 : 2);
   const day = opts.day ?? new Date().getDay();
 
-  const rows = await query<Pantry>(
+  const rows = await pgQuery<Pantry>(
     `SELECT pantry_id, name, address, zip, lat, lon, phone, hours,
             open_days, languages, tags, requirements
-     FROM pantries FINAL
-     WHERE active = 1
-       AND (empty(open_days) OR has(open_days, {day:UInt8}))`,
-    { day },
+     FROM pantries
+     WHERE active
+       AND (cardinality(open_days) = 0 OR $1::smallint = ANY (open_days))`,
+    [day],
   );
 
   const here =

@@ -1,4 +1,4 @@
-import { query } from "./clickhouse";
+import { pgQuery } from "./postgres";
 import { milesBetween } from "./geo";
 
 export type FoodEvent = {
@@ -44,15 +44,22 @@ export async function upcomingEvents(opts: {
   const radius = opts.radiusMiles ?? (needs.includes("low_mobility") ? 0.75 : 2);
   const limit = opts.limit ?? 3;
 
-  const rows = await query<FoodEvent>(
-    `SELECT event_id, pantry_id, title, toString(starts_at) AS starts_at,
-            toString(ends_at) AS ends_at, zip, lat, lon, address,
-            languages, tags, notes, requirements
-     FROM v_upcoming_events
-     WHERE starts_at < now() + INTERVAL {hours:UInt32} HOUR
+  const rows = await pgQuery<
+    Omit<FoodEvent, "starts_at" | "ends_at"> & { starts_text: string; ends_text: string }
+  >(
+    // formatEventTime parses 'YYYY-MM-DD hh:mm:ss' as UTC, so the timestamps are
+    // rendered to that shape here rather than handed over as Date objects.
+    `SELECT event_id, pantry_id, title,
+            to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS starts_text,
+            to_char(ends_at   AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS ends_text,
+            zip, lat, lon, address, languages, tags, notes, requirements
+     FROM pantry_events
+     WHERE NOT cancelled
+       AND ends_at > now()
+       AND starts_at < now() + make_interval(hours => $1::int)
      ORDER BY starts_at
      LIMIT 200`,
-    { hours: withinHours },
+    [withinHours],
   );
 
   const here =
@@ -62,6 +69,8 @@ export async function upcomingEvents(opts: {
   return rows
     .map((e) => ({
       ...e,
+      starts_at: e.starts_text,
+      ends_at: e.ends_text,
       miles: here ? milesBetween(here, { lat: e.lat, lon: e.lon }) : null,
     }))
     .filter((e) => {
