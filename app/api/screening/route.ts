@@ -60,7 +60,6 @@ export async function POST(req: Request) {
       phoneHash: hash,
       locale,
       answers,
-      startedAt: subscriber.created_at,
     });
   } catch (err) {
     console.error("[screening] storage write failed", err);

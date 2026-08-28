@@ -83,7 +83,7 @@ export async function handleScreeningReply(input: {
   const answers = parseAnswers(row);
 
   if (input.wantsFood) {
-    await abandonScreening(row, answers);
+    await abandonScreening(row.phone_hash, answers);
     return {
       messages: [{ text: render("screen_stopped", locale), templateKey: "screen_stopped" }],
       handoff: true,
@@ -105,7 +105,6 @@ export async function handleScreeningReply(input: {
       phoneHash: row.phone_hash,
       locale,
       answers: next,
-      startedAt: row.started_at,
       misses: misses >= 2 ? 0 : misses,
     });
     const prefix = misses >= 2 ? "" : render("screen_retry", locale) + "\n";
@@ -119,7 +118,6 @@ export async function handleScreeningReply(input: {
     phoneHash: row.phone_hash,
     locale,
     answers: next,
-    startedAt: row.started_at,
     misses: 0,
   });
   return { messages: [ask(next, locale)], handoff: false };
@@ -134,7 +132,6 @@ async function finish(
     phoneHash: row.phone_hash,
     locale,
     answers,
-    startedAt: row.started_at,
   });
   return {
     messages: [

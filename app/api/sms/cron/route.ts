@@ -4,12 +4,17 @@ import { query } from "@/lib/clickhouse";
 import { decryptPhone } from "@/lib/crypto";
 import { render } from "@/lib/sms-templates";
 import { sendSms } from "@/lib/sms";
+import { sweepScreeningAnswers } from "@/lib/screenings";
 
 export const maxDuration = 300;
 
 /**
  * One reminder, 24h after signup, to people who never replied YES. After that
  * they stay `pending` and are never texted again — no drip, no re-engagement.
+ *
+ * The same run erases stale screening answers. That is retention work rather
+ * than messaging work, but Hobby allows one cron a day and this is it; the
+ * sweep is idempotent, so a run that fails halfway costs nothing but a day.
  */
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization");
@@ -46,5 +51,16 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ due: due.length, sent });
+  // Ordered after the sends: a reminder that goes out matters more than a
+  // sweep that can wait until tomorrow, and this way a Postgres outage cannot
+  // stop the messages.
+  let swept: { erased: number; deleted: number } | { error: string };
+  try {
+    swept = await sweepScreeningAnswers();
+  } catch (err) {
+    console.error("[cron] screening sweep failed", err);
+    swept = { error: err instanceof Error ? err.message : "unknown" };
+  }
+
+  return NextResponse.json({ due: due.length, sent, swept });
 }
