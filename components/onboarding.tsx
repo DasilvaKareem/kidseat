@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { COPY, FIND, LOCALES, LOCALE_LABELS, type Locale } from "@/lib/i18n";
 import { formatUS } from "@/lib/phone";
+import type { Answers } from "@/lib/screening";
 import { Button, Choice, Field, Progress, Screen } from "./ui";
+import { ScreeningQuestions, ScreeningResults, type ScreeningResult } from "./screening";
 
-type Step = "language" | "phone" | "zip" | "household" | "needs" | "done" | "out_of_area";
+type Step =
+  | "language" | "phone" | "zip" | "household" | "needs" | "done"
+  | "out_of_area" | "screening" | "results";
 
 const NUMBERED: Step[] = ["phone", "zip", "household", "needs", "done"];
 const STORE_KEY = "sffood.onboarding";
@@ -52,6 +56,9 @@ function sessionId(): string {
 
 export default function Onboarding() {
   const [s, setS] = useState<State>(EMPTY);
+  // Deliberately not in the persisted State: screening answers stay in memory
+  // for the length of the visit and are never written to sessionStorage.
+  const [result, setResult] = useState<ScreeningResult | null>(null);
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -431,6 +438,66 @@ export default function Onboarding() {
     );
   }
 
+  // --- the extra questions ---------------------------------------------------
+  // These come after "you're signed up", never before it. The alerts are
+  // already theirs; the screening is an offer, not a toll gate.
+  if (s.step === "screening") {
+    const submit = async (answers: Answers) => {
+      setBusy(true);
+      try {
+        const res = await fetch("/api/screening", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: s.token, locale: s.locale, answers }),
+        });
+        const json = (await res.json().catch(() => ({}))) as
+          Partial<ScreeningResult> & { error?: string };
+        if (!res.ok || !json.referrals) {
+          setError(errorCopy(res.status, json.error));
+          track("screening", "error", json.error ?? `http_${res.status}`);
+          return;
+        }
+        setResult({ referrals: json.referrals, notes: json.notes ?? [] });
+        track("screening", "submit");
+        go("results");
+      } catch {
+        setError(t.common.serverError);
+        track("screening", "error", "network");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    return (
+      <ScreeningQuestions
+        locale={s.locale}
+        busy={busy}
+        onSubmit={submit}
+        onQuit={() => {
+          track("screening", "skip");
+          go("done");
+        }}
+        onAnswered={(id, action) => track("screening", action, id)}
+      />
+    );
+  }
+
+  if (s.step === "results" && result) {
+    return (
+      <>
+        <ScreeningResults locale={s.locale} result={result} zip={s.zip} />
+        <div className="mx-auto w-full max-w-[520px] px-5 pb-8">
+          <a
+            href="/map"
+            className="flex min-h-[60px] w-full items-center justify-center rounded-2xl border-2 border-line text-[18px] font-semibold text-ink"
+          >
+            {FIND[s.locale].title}
+          </a>
+        </div>
+      </>
+    );
+  }
+
   // --- step 5: done ----------------------------------------------------------
   return (
     <Screen title={t.done.title}>
@@ -440,6 +507,17 @@ export default function Onboarding() {
       <p className="mt-6 rounded-2xl bg-surface p-4 text-[17px] leading-relaxed text-muted">
         {t.done.keywords}
       </p>
+      {/* The offer, after the value: they are already signed up either way. */}
+      <div className="mt-6">
+        <Button
+          onClick={() => {
+            track("screening", "view");
+            go("screening");
+          }}
+        >
+          {t.screening.cta}
+        </Button>
+      </div>
       {/* Not everyone wants to wait for a text — the map is the same data. */}
       <a
         href="/map"

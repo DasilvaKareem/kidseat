@@ -14,6 +14,10 @@ import {
   mapsEnabled,
   type TravelMode,
 } from "./maps";
+import {
+  nextQuestion, progress, renderQuestion, type Answers,
+} from "./screening";
+import { forModel, route } from "./eligibility";
 
 // Routed through the Vercel AI Gateway, so the model is a plain
 // "provider/model" string and swapping models is an env change.
@@ -433,3 +437,91 @@ export async function answerFoodRequest(opts: {
 
   return fallbackWithEvents(events, pantries, opts.locale);
 }
+
+// --- eligibility tools ------------------------------------------------------
+
+// The screening answer set, as the model is allowed to report it. Everything is
+// optional: the routing runs on whatever the person has actually said, and a
+// half-answered screening still produces referrals.
+const ANSWERS = z.object({
+  household_size: z.number().int().min(1).max(20).optional()
+    .describe("People who buy and make food together, including them."),
+  benefits: z
+    .array(z.enum(["calfresh", "calworks", "medical", "ssi", "medicare", "wic", "none"]))
+    .optional()
+    .describe("Benefits they already receive."),
+  income_band: z
+    .enum(["under_130", "130_165", "165_185", "185_200", "over_200", "unknown"])
+    .optional()
+    .describe("Which band of the poverty level their monthly household income falls in."),
+  senior: z.enum(["yes", "no"]).optional().describe("Anyone 60 or older at home."),
+  pregnant: z.enum(["yes", "no"]).optional()
+    .describe("Anyone pregnant or within 6 months postpartum."),
+  children: z.array(z.enum(["none", "under_5", "5_17"])).optional(),
+  disability: z.enum(["yes", "no"]).optional()
+    .describe("Functional only: hard to work, shop, or cook. Never a diagnosis."),
+  housing: z.enum(["own_place", "with_others", "shelter", "outside", "hotel"]).optional(),
+  kitchen: z.enum(["both", "one", "neither"]).optional()
+    .describe("Working fridge and stove where they are staying."),
+  chronic: z.enum(["yes", "no"]).optional()
+    .describe("A nutrition-sensitive condition, asked only of Medi-Cal members."),
+  citizen_branch: z.enum(["yes", "no"]).optional()
+    .describe(
+      "ONLY if they volunteer it for a CalFresh question. Never ask for " +
+      "immigration or citizenship status to decide what to offer.",
+    ),
+});
+
+/**
+ * Eligibility is a lookup, not a judgement call. These two tools are the only
+ * way the model may talk about programs: one asks the next scripted question,
+ * the other runs the routing table. Nothing about who qualifies for what is
+ * left to the model's memory of federal rules, which changed twice in 2026.
+ */
+export function buildScreeningTools(locale: Locale) {
+  return {
+    next_screening_question: tool({
+      description:
+        "The next question to ask to find what else this person can get. Ask " +
+        "one at a time, in this order, and let them skip any of them.",
+      inputSchema: z.object({ known: ANSWERS.default({}) }),
+      execute: async ({ known }) => {
+        const answers = known as Answers;
+        const q = nextQuestion(answers);
+        if (!q) return { done: true as const, ask: null };
+        const { asked, total } = progress(answers);
+        return {
+          done: false as const,
+          question_id: q.id,
+          ask: renderQuestion(q, answers, locale),
+          answered: asked,
+          total,
+        };
+      },
+    }),
+
+    check_food_programs: tool({
+      description:
+        "Which food programs this person is likely to qualify for, given what " +
+        "they have told you. Call it before naming any program: it also " +
+        "returns the programs NOT to suggest, and the rules that changed in " +
+        "2026 and must be verified rather than promised.",
+      inputSchema: z.object({ known: ANSWERS }),
+      execute: async ({ known }) => forModel(route(known as Answers), locale),
+    }),
+  };
+}
+
+/** Rules that apply wherever eligibility comes up — SMS and the chat bar. */
+export const ELIGIBILITY_RULES = [
+  "- Never say someone IS eligible. Say what they are likely to qualify for,",
+  "  and that the county decides.",
+  "- Never state a program rule from memory. check_food_programs is the only",
+  "  source of eligibility facts, including who to steer away from.",
+  "- Never ask about immigration or citizenship status. Pantries, WIC, school",
+  "  meals, SUN Bucks, and senior boxes do not screen on it, and asking keeps",
+  "  people from signing up for anything at all.",
+  "- Ask one question at a time, and honor a skip on the first refusal.",
+  "- Pantries and free dining rooms need no eligibility, no ID, and no proof.",
+  "  Offer those first, before any question.",
+].join("\n");

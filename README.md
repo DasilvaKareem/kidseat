@@ -7,7 +7,7 @@ through LibreChat.
 ## Why SMS
 
 The people this serves have phones, not smartphones with spare data. Everything
-after signup happens over plain text: `FOOD` finds sites now, `STOP` quits.
+after signup happens over plain text: `FOOD` finds sites now, `CHECK` screens for the programs behind it, `STOP` quits.
 
 ## Stack
 
@@ -45,16 +45,22 @@ print to the terminal with their encoding and segment count.
 
 ```
 language ──▶ phone + consent ──▶ ZIP ──▶ household ──▶ needs ──▶ done
-                   │                │        (skip)     (skip)
-                   │                └──▶ out of area ──▶ 211 referral
-                   ▼
-          consent row written
-          confirm SMS sent  ──▶  reply YES  ──▶  status: active
-                             ──▶  no reply  ──▶  one reminder at 24h, then silence
+                   │                │        (skip)     (skip)     │
+                   │                └──▶ out of area ──▶ 211       │
+                   ▼                                               ▼
+          consent row written                        extra questions (optional)
+          confirm SMS sent  ──▶  reply YES  ──▶  active            │
+                             ──▶  no reply  ──▶  one reminder      ▼
+                                                        what you may qualify for
 ```
 
 There is no code-entry screen. The first outbound SMS *is* the double opt-in,
 which is both carrier-compliant and one fewer screen to abandon.
+
+The extra questions come after "you're signed up", never before it. Pantries and
+dining rooms need no eligibility at all, so the service can hand over something
+useful before it asks anything — and the alerts are already theirs whether or
+not they answer.
 
 ## The map app (`/map`)
 
@@ -106,7 +112,8 @@ so it cannot be used to test whether someone uses a food bank.
 ### The chat bar
 
 Signed-in only, because it can read the person's own applications. It gets the
-agent's five tools plus `list_programs` and `my_applications` — the last one so
+agent's five tools, the two screening tools, plus `list_programs` and
+`my_applications` — the last one so
 it never tells someone to re-apply to a program they are already in. It sees
 application *statuses* only, never the answers someone typed about their
 household.
@@ -138,6 +145,72 @@ render of the same data — a person who texts FOOD always gets an answer.
 Results messages get a wider budget than the notification templates (320 chars
 Latin / 200 Chinese, so 2–3 segments) and carry at most one `maps.google.com`
 link, for the closest option.
+
+### Finding more than a pantry
+
+A pantry solves today. CalFresh, WIC, a senior box, or a delivery route solves
+the month — and most people never find out they qualify. Text `CHECK` (or
+`BENEFITS`, or `CALFRESH`) and the agent walks a screening: eight core questions
+plus up to three conditional ones, one per message, any of them skippable.
+
+```
+household size ─▶ benefits you already get ─▶ income band ─▶ 60+? ─▶ pregnant?
+   ─▶ children? ─▶ disability? ─▶ where you're staying
+        │
+        ├─ (no kitchen or not your own place) ─▶ fridge and stove?
+        ├─ (on Medi-Cal)                      ─▶ nutrition-sensitive condition?
+        └─ always last, optional              ─▶ language and dietary needs
+```
+
+The question bank ([lib/screening.ts](lib/screening.ts)) is shared: the SMS flow
+and the web section render the same questions, in the same order, with the same
+conditional branches. The routing table ([lib/eligibility.ts](lib/eligibility.ts))
+turns the answers into referrals across CalFresh, the Restaurant Meals Program,
+WIC, CSFP senior boxes, SUN Bucks, universal school meals, CalAIM medically
+supportive food, home-delivered groceries, and the always-open pantries and
+dining rooms.
+
+Three things this is careful about:
+
+**Income is a band, never a figure.** Every program keys on a percentage of the
+federal poverty level, so the only question is which side of 130 / 165 / 185 /
+200% someone falls on. The bands are generated from household size, so a family
+of four sees the edges that apply to a family of four. Nobody is asked for a pay
+stub, and no dollar figure is stored.
+
+**Immigration status is not a routing input.** It is sensitive personal
+information under California AB 947, it suppresses enrollment, and pantries,
+WIC, school meals, SUN Bucks, and CSFP do not screen on it. The one exception is
+an optional CalFresh-specific yes/no branch, asked last, that the person can
+skip with no effect on anything we send — and its answer is stripped before any
+write, so it never reaches storage even transiently.
+
+**It estimates, it does not decide.** Referrals come back as *likely* or
+*maybe*, never *yes*, and every message says the county decides. Two federal
+rules changed in 2026 — H.R.1 narrowed CalFresh noncitizen eligibility on April
+1, and the ABAWD work rules resumed June 1 — so referrals that touch either
+carry a verify-live caveat instead of a promise. `lib/eligibility.ts` records
+when the rule table was last reviewed and `/api/health` reports how stale it is.
+
+The negative rules matter as much as the positive ones. The screening will
+refuse to tell a working-age CalFresh recipient with no disability that they can
+spend EBT at a restaurant, refuse to sell CalAIM meals as a fix for food
+insecurity, and volunteer that school meals are free for every California
+student regardless of income.
+
+### What a screening leaves behind
+
+Route transiently, persist minimally. While the questions are being answered the
+raw answers live in `screenings.answers` with a two-day column TTL, because an
+SMS conversation spans hours. The moment it finishes, that column is cleared and
+what remains is coarse flags (`senior`, `has_kids`, `no_kitchen`) and which
+programs the person was pointed at. No income band, no housing status, no
+disability answer, and never the citizenship branch. The web section never
+persists answers at all — the browser holds them, `/api/screening` routes on
+them, and only the outcome is written.
+
+Analysts get `v_screening_outcomes`: completion rate and referral mix by day and
+language, with no per-person row.
 
 ### Events vs. hours
 
@@ -215,7 +288,14 @@ street address.
    is not a substitute — it has no idea when a distribution actually happens.
 3. **A shared rate limiter.** `lib/ratelimit.ts` is per-instance and will not
    stop SMS pumping across regions. Move it to Redis or provider-side controls.
-4. **Legal review of the data model** if anything beyond aggregate reporting is
+4. **A review of the eligibility rules.** `lib/eligibility.ts` carries a
+   `RULES_REVIEWED` date and `/api/health` reports its age. The CalFresh
+   noncitizen rules (H.R.1, April 2026) and ABAWD time limits (June 2026) are
+   the two the screener deliberately refuses to assert — confirm the current
+   state with CDSS before loosening those caveats. The FPL constants in
+   `lib/screening.ts` update every October; `npm run smoke` pins the published
+   figures so a stale table fails CI rather than quoting last year's money.
+5. **Legal review of the data model** if anything beyond aggregate reporting is
    planned. See below.
 
 ## A note on monetization

@@ -1,5 +1,4 @@
-import crypto from "node:crypto";
-import { query, insert, chTime } from "./clickhouse";
+import { pgQuery } from "./postgres";
 
 export type FieldType = "text" | "tel" | "select" | "checkbox" | "textarea";
 
@@ -23,50 +22,50 @@ export type Program = {
   languages: string[];
   requirements: string;
   processing_days: number;
-  fields: string;
+  fields: ProgramField[];
   external_url: string;
 };
 
-export type ProgramWithFields = Omit<Program, "fields"> & { fields: ProgramField[] };
+export type ProgramWithFields = Program;
 
-function parseFields(raw: string): ProgramField[] {
-  try {
-    const parsed = JSON.parse(raw || "[]");
-    return Array.isArray(parsed) ? (parsed as ProgramField[]) : [];
-  } catch {
-    // A malformed field definition must not take down the page — the program
-    // still renders, just with no form.
-    return [];
-  }
-}
+// `fields` is jsonb with a CHECK that it is an array, so it arrives parsed and
+// already the right shape -- no JSON.parse, and no try/catch around one.
+// pantry_id is NULL for a standalone program; the callers all expect ''.
+const SELECT = `program_id, name, provider, kind, summary,
+                COALESCE(pantry_id, '') AS pantry_id, zip_scope, languages,
+                requirements, processing_days, fields, external_url`;
 
-const SELECT = `program_id, name, provider, kind, summary, pantry_id, zip_scope,
-                languages, requirements, processing_days, fields, external_url`;
+const STAMPS = `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at,
+                to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at`;
+
+const APPLICATION_COLS = `application_id, phone_hash, program_id, status, answers,
+                          note, locale, ${STAMPS}`;
+
+// Postgres rejects a malformed uuid with an error rather than no rows, so a
+// junk id from a client would 500 instead of 404 without this.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function listPrograms(opts: {
   zip?: string;
   pantryId?: string;
 }): Promise<ProgramWithFields[]> {
-  const rows = await query<Program>(
-    `SELECT ${SELECT} FROM programs FINAL
-     WHERE active = 1
-       AND ({pantry:String} = '' OR pantry_id = {pantry:String})
-       AND (empty(zip_scope) OR {zip:String} = '' OR has(zip_scope, {zip:String}))
+  return pgQuery<Program>(
+    `SELECT ${SELECT} FROM programs
+     WHERE active
+       AND ($1 = '' OR pantry_id = $1)
+       AND (cardinality(zip_scope) = 0 OR $2 = '' OR $2 = ANY (zip_scope))
      ORDER BY kind, name
      LIMIT 100`,
-    { pantry: opts.pantryId ?? "", zip: opts.zip ?? "" },
+    [opts.pantryId ?? "", opts.zip ?? ""],
   );
-  return rows.map((r) => ({ ...r, fields: parseFields(r.fields) }));
 }
 
 export async function getProgram(programId: string): Promise<ProgramWithFields | null> {
-  const rows = await query<Program>(
-    `SELECT ${SELECT} FROM programs FINAL
-     WHERE active = 1 AND program_id = {id:String} LIMIT 1`,
-    { id: programId },
+  const rows = await pgQuery<Program>(
+    `SELECT ${SELECT} FROM programs WHERE active AND program_id = $1 LIMIT 1`,
+    [programId],
   );
-  const row = rows[0];
-  return row ? { ...row, fields: parseFields(row.fields) } : null;
+  return rows[0] ?? null;
 }
 
 export type Application = {
@@ -74,7 +73,7 @@ export type Application = {
   phone_hash: string;
   program_id: string;
   status: string;
-  answers: string;
+  answers: Record<string, string>;
   note: string;
   locale: string;
   created_at: string;
@@ -82,14 +81,12 @@ export type Application = {
 };
 
 export async function listApplications(phoneHash: string): Promise<Application[]> {
-  return query<Application>(
-    `SELECT application_id, phone_hash, program_id, status, answers, note, locale,
-            toString(created_at) AS created_at, toString(updated_at) AS updated_at
-     FROM applications FINAL
-     WHERE phone_hash = {hash:String}
+  return pgQuery<Application>(
+    `SELECT ${APPLICATION_COLS} FROM applications
+     WHERE phone_hash = $1
      ORDER BY created_at DESC
      LIMIT 100`,
-    { hash: phoneHash },
+    [phoneHash],
   );
 }
 
@@ -136,38 +133,32 @@ export async function submitApplication(input: {
   answers: Record<string, string>;
   locale: string;
 }): Promise<Application> {
-  const now = chTime();
-  const row: Application = {
-    application_id: crypto.randomUUID(),
-    phone_hash: input.phoneHash,
-    program_id: input.programId,
-    status: "submitted",
-    answers: JSON.stringify(input.answers),
-    note: "",
-    locale: input.locale,
-    created_at: now,
-    updated_at: now,
-  };
-  await insert("applications", [row]);
-  return row;
+  // The id and both timestamps are the database's to assign. The foreign key
+  // on program_id means an application can never point at a program that is
+  // not there -- previously nothing enforced that.
+  const rows = await pgQuery<Application>(
+    `INSERT INTO applications (phone_hash, program_id, answers, locale)
+     VALUES ($1, $2, $3::jsonb, $4)
+     RETURNING ${APPLICATION_COLS}`,
+    [input.phoneHash, input.programId, JSON.stringify(input.answers), input.locale],
+  );
+  return rows[0];
 }
 
 export async function withdrawApplication(
   phoneHash: string,
   applicationId: string,
 ): Promise<boolean> {
-  const rows = await query<Application>(
-    `SELECT application_id, phone_hash, program_id, status, answers, note, locale,
-            toString(created_at) AS created_at, toString(updated_at) AS updated_at
-     FROM applications FINAL
-     WHERE application_id = {id:String} AND phone_hash = {hash:String} LIMIT 1`,
-    { id: applicationId, hash: phoneHash },
+  if (!UUID.test(applicationId)) return false;
+  // One statement, and still scoped by phone_hash as well as id so nobody can
+  // withdraw someone else's. Read-then-write was only ever needed because
+  // ClickHouse had no UPDATE; it also raced with itself.
+  const rows = await pgQuery<{ application_id: string }>(
+    `UPDATE applications
+     SET status = 'withdrawn', updated_at = now()
+     WHERE application_id = $1::uuid AND phone_hash = $2 AND status <> 'withdrawn'
+     RETURNING application_id`,
+    [applicationId, phoneHash],
   );
-  const existing = rows[0];
-  // Scoped by phone_hash as well as id, so one person cannot withdraw another's.
-  if (!existing) return false;
-  await insert("applications", [
-    { ...existing, status: "withdrawn", updated_at: chTime() },
-  ]);
-  return true;
+  return rows.length > 0;
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { readSession } from "@/lib/session";
 import { getByHash } from "@/lib/subscribers";
 import { isLocale, type Locale } from "@/lib/i18n";
-import { buildTools } from "@/lib/agent";
+import { buildTools, buildScreeningTools, ELIGIBILITY_RULES } from "@/lib/agent";
 import { listPrograms, listApplications } from "@/lib/programs";
 
 export const maxDuration = 60;
@@ -53,6 +53,7 @@ export async function POST(req: Request) {
 
   const tools = {
     ...buildTools({ locale, zip, lat, lon, needs }),
+    ...buildScreeningTools(locale),
 
     list_programs: tool({
       description:
@@ -124,6 +125,10 @@ export async function POST(req: Request) {
       "- Short paragraphs. No markdown tables. This is read on a phone.",
       "- To apply, tell them to press Apply on the program card — do not try to",
       "  collect application answers in chat.",
+      "",
+      "When they ask what they qualify for, or mention CalFresh, WIC, a senior",
+      "box, delivery, or SUN Bucks, walk the screening:",
+      ELIGIBILITY_RULES,
     ]
       .filter(Boolean)
       .join("\n"),

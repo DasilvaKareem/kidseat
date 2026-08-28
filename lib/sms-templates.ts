@@ -11,7 +11,10 @@ export type TemplateKey =
   | "stop_ack"
   | "help"
   | "no_results"
-  | "login_code";
+  | "login_code"
+  | "screen_intro"
+  | "screen_retry"
+  | "screen_stopped";
 
 export const SMS: Record<TemplateKey, Record<Locale, string>> = {
   confirm: {
@@ -44,6 +47,23 @@ export const SMS: Record<TemplateKey, Record<Locale, string>> = {
     "zh-Hans": "SF FOOD：您的验证码是 {code}。10 分钟内有效。",
     es: "SF FOOD: su codigo es {code}. Vence en 10 minutos.",
   },
+  // The screening opens by giving something away, not by asking: a pantry is
+  // open to anyone today whether or not the person answers a single question.
+  screen_intro: {
+    en: "SF FOOD: a few questions to find what else you can get. Reply SKIP to any. Text FOOD anytime for a pantry now.",
+    "zh-Hans": "SF FOOD：几个问题，看看您还能获得什么。可回复 SKIP 跳过。随时回复 FOOD 查找领取点。",
+    es: "SF FOOD: unas preguntas para ver que mas puede recibir. Responda SKIP para omitir. Envie FOOD para una despensa ahora.",
+  },
+  screen_retry: {
+    en: "Sorry, I did not catch that. Reply with a number, or SKIP.",
+    "zh-Hans": "抱歉，未能识别。请回复数字，或回复 SKIP 跳过。",
+    es: "Perdon, no entendi. Responda con un numero, o SKIP.",
+  },
+  screen_stopped: {
+    en: "Stopped the questions. Text CHECK anytime to pick it back up.",
+    "zh-Hans": "已停止提问。随时回复 CHECK 继续。",
+    es: "Preguntas detenidas. Envie CHECK cuando quiera continuar.",
+  },
   no_results: {
     en: "No open food sites near {zip} right now. We'll text you when one opens. Or call 211.",
     "zh-Hans": "{zip} 附近目前没有开放的领取点。有开放时我们会通知您。或拨打 211。",
@@ -64,6 +84,21 @@ const GSM7 =
   "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
   "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
 const GSM7_EXT = "^{}\\[~]|€";
+
+// Spanish and English copy written for a screen carries characters GSM-7 does
+// not have — á, í, ó, ú, an em dash, curly quotes — and a single one of them
+// flips the whole message to UCS-2, cutting the segment from 153 characters to
+// 67. Folding them costs an accent; not folding them doubles the send cost and
+// can push a message the person needs into a third segment. The web keeps the
+// real characters; only the SMS render folds.
+const FOLD: Record<string, string> = {
+  "á": "a", "í": "i", "ó": "o", "ú": "u", "Á": "A", "Í": "I", "Ó": "O", "Ú": "U",
+  "—": "-", "–": "-", "’": "'", "‘": "'", "“": '"', "”": '"', "…": "...",
+};
+
+export function smsSafe(text: string): string {
+  return text.replace(/[áíóúÁÍÓÚ—–’‘“”…]/g, (c) => FOLD[c] ?? c);
+}
 
 export function encodingOf(text: string): "GSM-7" | "UCS-2" {
   for (const ch of text) {

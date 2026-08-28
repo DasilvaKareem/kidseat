@@ -6,6 +6,8 @@ import { render } from "@/lib/sms-templates";
 import { verifyInbound, parseInbound, sendSms, provider } from "@/lib/sms";
 import { getByHash, setStatus, logInbound, upsertSubscriber } from "@/lib/subscribers";
 import { answerFoodRequest } from "@/lib/agent";
+import { getScreening, isLive, type Screening } from "@/lib/screenings";
+import { beginScreening, handleScreeningReply, type FlowResult } from "@/lib/screening-flow";
 
 const LANG_WORDS: Record<string, Locale> = {
   english: "en", en: "en",
@@ -90,11 +92,54 @@ export async function POST(req: Request) {
       return new NextResponse(null, { status: 200 });
     }
 
-    // Anything else from a confirmed subscriber is treated as "I need food now".
-    // Unconfirmed numbers get the opt-in prompt again instead of content.
+    // Only confirmed subscribers get content of any kind — a screening question
+    // is content too. Unconfirmed numbers get the opt-in prompt again.
     if (sub.status !== "active") {
       await reply(msg.from, hash, "confirm", locale);
       return new NextResponse(null, { status: 200 });
+    }
+
+    // --- eligibility screening ---------------------------------------------
+    // A screening in progress owns the conversation: the next message is read
+    // as an answer, not as a food search. FOOD still breaks out of it, because
+    // someone who is hungry now should never have to finish a questionnaire.
+    let screening: Screening | null = null;
+    try {
+      screening = await getScreening(hash);
+    } catch (err) {
+      console.error("[sms/inbound] screening lookup failed", err);
+    }
+
+    let flow: FlowResult | null = null;
+    try {
+      if (keyword === "CHECK") {
+        flow = await beginScreening(hash, locale);
+      } else if (isLive(screening) && screening) {
+        flow = await handleScreeningReply({
+          row: screening,
+          locale,
+          text: msg.text,
+          wantsFood: keyword === "FOOD",
+        });
+      }
+    } catch (err) {
+      // A screening that cannot be stored is not worth a silent text. Fall
+      // through and answer the food question instead — that path has its own
+      // fallbacks and never needs the database to be healthy.
+      console.error("[sms/inbound] screening failed", err);
+    }
+
+    if (flow) {
+      for (const out of flow.messages) {
+        await sendSms({
+          to: msg.from,
+          phoneHash: hash,
+          text: out.text,
+          templateKey: out.templateKey,
+          locale,
+        });
+      }
+      if (!flow.handoff) return new NextResponse(null, { status: 200 });
     }
 
     // The agent searches our events and pantries first, then falls through to
@@ -105,7 +150,7 @@ export async function POST(req: Request) {
       lat: sub.lat,
       lon: sub.lon,
       needs: sub.needs,
-      question: keyword === "FOOD" ? undefined : msg.text,
+      question: keyword === "FOOD" || keyword === "CHECK" ? undefined : msg.text,
     });
 
     if (!text) {
