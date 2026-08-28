@@ -40,6 +40,20 @@ type Copy = {
   household: { title: string; sub: string; options: [string, string][] };
   needs: { title: string; sub: string; options: [string, string][] };
   done: { title: string; body: string; keywords: string };
+  screening: {
+    cta: string;
+    title: string;
+    sub: string;
+    skipQuestion: string;
+    skipAll: string;
+    finish: string;
+    resultsTitle: string;
+    resultsSub: string;
+    confidence: { likely: string; possible: string; open_to_all: string };
+    documents: string;
+    privacy: string;
+    none: string;
+  };
 };
 
 // Consent wording is versioned. Bump CONSENT_VERSION on ANY change to
@@ -101,6 +115,20 @@ export const COPY: Record<Locale, Copy> = {
       body: "We'll text you within a day when there's free food near {zip}.",
       keywords: "Text STOP to quit. Text FOOD anytime to find food right now.",
     },
+    screening: {
+      cta: "See what else you can get",
+      title: "A few more questions",
+      sub: "Most people qualify for more than they think. Skip anything you'd rather not answer.",
+      skipQuestion: "Skip this question",
+      skipAll: "Not now",
+      finish: "Show me",
+      resultsTitle: "You may be able to get",
+      resultsSub: "This is an estimate, not a decision. The county decides.",
+      confidence: { likely: "Likely", possible: "Maybe", open_to_all: "Open to everyone" },
+      documents: "Brings ID or proof of income",
+      privacy: "We keep none of these answers. Only which programs to point you to.",
+      none: "Nothing extra came up — but pantries are open to anyone, with no questions asked.",
+    },
   },
   "zh-Hans": {
     common: {
@@ -156,6 +184,20 @@ export const COPY: Record<Locale, Copy> = {
       body: "一天之内，{zip} 附近有免费食物时我们会发短信给您。",
       keywords: "回复 STOP 退订。随时回复 FOOD 立即查找食物。",
     },
+    screening: {
+      cta: "看看您还能获得什么",
+      title: "再回答几个问题",
+      sub: "多数人符合的项目比自己以为的多。不想回答的可以跳过。",
+      skipQuestion: "跳过此题",
+      skipAll: "以后再说",
+      finish: "查看结果",
+      resultsTitle: "您可能可以获得",
+      resultsSub: "这只是估计，不是决定，最终由县政府决定。",
+      confidence: { likely: "很可能", possible: "也许", open_to_all: "人人可用" },
+      documents: "需要证件或收入证明",
+      privacy: "我们不保存这些答案，只保存该为您推荐哪些项目。",
+      none: "没有额外项目 — 但食物领取点对所有人开放，无需任何证明。",
+    },
   },
   es: {
     common: {
@@ -210,6 +252,20 @@ export const COPY: Record<Locale, Copy> = {
       title: "Ya está inscrito",
       body: "Le enviaremos un mensaje dentro de un día cuando haya comida gratis cerca de {zip}.",
       keywords: "Envíe STOP para cancelar. Envíe FOOD en cualquier momento para encontrar comida ahora.",
+    },
+    screening: {
+      cta: "Vea qué más puede recibir",
+      title: "Unas preguntas más",
+      sub: "Casi todos califican para más de lo que creen. Omita lo que no quiera contestar.",
+      skipQuestion: "Omitir esta pregunta",
+      skipAll: "Ahora no",
+      finish: "Mostrar",
+      resultsTitle: "Puede que califique para",
+      resultsSub: "Esto es una estimación, no una decisión. El condado decide.",
+      confidence: { likely: "Probable", possible: "Quizás", open_to_all: "Para todos" },
+      documents: "Pide identificación o comprobante de ingresos",
+      privacy: "No guardamos estas respuestas. Solo a qué programas dirigirle.",
+      none: "No salió nada extra, pero las despensas están abiertas para todos, sin preguntas.",
     },
   },
 };

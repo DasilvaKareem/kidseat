@@ -1,4 +1,5 @@
-export type Keyword = "STOP" | "START" | "HELP" | "YES" | "FOOD" | "LANG" | null;
+export type Keyword =
+  | "STOP" | "START" | "HELP" | "YES" | "FOOD" | "LANG" | "CHECK" | null;
 
 // Carrier-mandated English keywords must work no matter what language the
 // person picked. Localized aliases are added on top, never in place of them.
@@ -8,6 +9,11 @@ const START = ["start","unstop","yes","si","sí","是","好","订阅","subscribe
 const HELP = ["help","info","ayuda","帮助","信息"];
 const FOOD = ["food","eat","hungry","comida","hambre","食物","吃","饿"];
 const LANG = ["lang","language","idioma","语言"];
+// Starts the eligibility screening. "benefits" and "calfresh" are here because
+// that is what people actually text when they want more than a pantry.
+const CHECK = ["check","benefits","qualify","apply","calfresh","snap","ebt",
+  "beneficios","calificar","solicitar","califico",
+  "福利","申请","资格","粮食券"];
 
 function normalize(text: string): string {
   return text
@@ -31,6 +37,7 @@ export function parseKeyword(text: string): Keyword {
   if (HELP.includes(first) && isShort) return "HELP";
   if (LANG.includes(first) && isShort) return "LANG";
   if (START.includes(first) && isShort) return first === "start" || first === "unstop" ? "START" : "YES";
+  if (CHECK.includes(first) && isShort) return "CHECK";
   if (FOOD.includes(first) && isShort) return "FOOD";
   return null;
 }

@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS sffood.onboarding_events
 (
     event_id    UUID,
     session_id  String,
-    step        LowCardinality(String),  -- language|phone|zip|household|needs|done|out_of_area
+    step        LowCardinality(String),  -- language|phone|zip|household|needs|done|out_of_area|screening|results
     action      LowCardinality(String),  -- view|submit|skip|back|error
     locale      LowCardinality(String),
     detail      String DEFAULT '',
@@ -257,3 +257,50 @@ SELECT toDate(created_at) AS day,
        count() AS applications
 FROM sffood.applications FINAL
 GROUP BY day, program_id, locale, status;
+
+-- ---------------------------------------------------------------------------
+-- Eligibility screening
+-- ---------------------------------------------------------------------------
+
+-- One row per person, replaced as they answer. `answers` is the only place raw
+-- screening answers exist, and it is deliberately short-lived: the column TTL
+-- blanks it two days after the last reply, and completeScreening() clears it
+-- the moment the routing is computed. What survives is `flags` (coarse
+-- categories like senior or has_kids) and `referrals` (which programs the
+-- person was pointed at) — enough to report on, not enough to profile.
+--
+-- Immigration status is never asked as a routing gate, and the one optional
+-- CalFresh citizenship branch is stripped in lib/screenings.ts before any
+-- write, so it cannot appear in this table even transiently.
+CREATE TABLE IF NOT EXISTS sffood.screenings
+(
+    phone_hash  String,
+    locale      LowCardinality(String),
+    status      LowCardinality(String),  -- in_progress|complete|abandoned
+    answers     String DEFAULT '' TTL toDateTime(updated_at) + INTERVAL 2 DAY,
+    flags       Array(LowCardinality(String)) DEFAULT [],
+    referrals   Array(LowCardinality(String)) DEFAULT [],
+    misses      UInt8 DEFAULT 0,         -- consecutive unparsed replies
+    started_at  DateTime64(3, 'UTC'),
+    updated_at  DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY phone_hash
+TTL toDateTime(updated_at) + INTERVAL 400 DAY;
+
+-- Which programs the screening sends people to, and where it stalls. No
+-- answers, no flags per person — the analyst sees rates, not people.
+CREATE OR REPLACE VIEW sffood.v_screening_outcomes AS
+SELECT toDate(started_at) AS day,
+       locale,
+       status,
+       count()                                   AS screenings,
+       countIf(has(referrals, 'calfresh'))       AS to_calfresh,
+       countIf(has(referrals, 'wic'))            AS to_wic,
+       countIf(has(referrals, 'csfp'))           AS to_senior_box,
+       countIf(has(referrals, 'sun_bucks'))      AS to_sun_bucks,
+       countIf(has(referrals, 'hdg'))            AS to_delivery,
+       countIf(has(referrals, 'rmp'))            AS to_restaurant_meals,
+       countIf(length(referrals) <= 1)           AS nothing_beyond_pantries
+FROM sffood.screenings FINAL
+GROUP BY day, locale, status;

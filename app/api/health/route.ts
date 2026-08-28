@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { configReport } from "@/lib/config";
 import { query } from "@/lib/clickhouse";
+import { RULES_REVIEWED, rulesAgeDays, rulesAreStale } from "@/lib/eligibility";
+import { FPL_YEAR } from "@/lib/screening";
 
 /**
  * Answers "why did onboarding just fail?" without anyone reading a stack trace.
@@ -22,8 +24,17 @@ export async function GET() {
     }
   }
 
+  // Eligibility rules and poverty levels go out of date on a calendar, not on
+  // an error, so the only way anyone finds out is if something says so.
+  const eligibility = {
+    rulesReviewed: RULES_REVIEWED,
+    rulesAgeDays: rulesAgeDays(),
+    rulesStale: rulesAreStale(),
+    povertyGuidelines: FPL_YEAR,
+  };
+
   return NextResponse.json(
-    { ...report, clickhouse },
+    { ...report, clickhouse, eligibility },
     { status: report.ok && clickhouse.ok ? 200 : 503 },
   );
 }
