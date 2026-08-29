@@ -192,3 +192,21 @@ SELECT toDate(created_at) AS day,
        count() AS applications
 FROM sffood.application_events
 GROUP BY day, program_id, locale, status;
+
+-- ---------------------------------------------------------------------------
+-- Email as a second delivery channel
+-- ---------------------------------------------------------------------------
+-- Optional, and additive: phone_hash is still the identity and the login.
+-- Stored AES-256-GCM under the same key as phone_enc and read only by the send
+-- path, so an email address is no more queryable than a phone number is. Empty
+-- string means "no email on file", which is the common case.
+ALTER TABLE sffood.subscribers
+    ADD COLUMN IF NOT EXISTS email_enc String DEFAULT '';
+
+-- has_email, never the address itself: analysts get channel mix, not a mailing
+-- list. v_subscribers is what LibreChat is granted.
+CREATE OR REPLACE VIEW sffood.v_subscribers AS
+SELECT phone_hash, locale, zip, household_bucket, needs, status,
+       email_enc != '' AS has_email,
+       created_at, confirmed_at, stopped_at, updated_at
+FROM sffood.subscribers FINAL;

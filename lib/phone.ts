@@ -14,3 +14,15 @@ export function toE164(input: string): string | null {
   if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(d)) return null;
   return `+1${d}`;
 }
+
+/**
+ * Deliberately permissive: one @, a dot in the domain, no spaces. Anything
+ * stricter rejects real addresses, and the confirmation email is what actually
+ * proves an address works.
+ */
+export function normalizeEmail(input: string): string | null {
+  const e = input.trim().toLowerCase();
+  if (!e) return null;
+  if (e.length > 254) return null;
+  return /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(e) ? e : null;
+}

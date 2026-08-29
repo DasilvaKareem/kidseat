@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { isLocale, COPY, CONSENT_VERSION } from "@/lib/i18n";
-import { toE164 } from "@/lib/phone";
+import { toE164, normalizeEmail } from "@/lib/phone";
 import { phoneHash } from "@/lib/crypto";
 import { upsertSubscriber, recordConsent, getByHash } from "@/lib/subscribers";
 import { sendSms } from "@/lib/sms";
+import { sendEmail } from "@/lib/email";
 import { render } from "@/lib/sms-templates";
 import { signToken } from "@/lib/token";
 import { allow, clientIp } from "@/lib/ratelimit";
@@ -36,6 +37,7 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as {
     phone?: string;
+    email?: string;
     locale?: string;
   } | null;
 
@@ -45,6 +47,14 @@ export async function POST(req: Request) {
   const e164 = toE164(body.phone ?? "");
   if (!e164) {
     return NextResponse.json({ error: "bad_phone" }, { status: 400 });
+  }
+
+  // Email is optional. Blank is fine; malformed is not, because silently
+  // dropping a typo'd address means someone waits for mail that never comes.
+  const rawEmail = (body.email ?? "").trim();
+  const email = rawEmail ? normalizeEmail(rawEmail) : null;
+  if (rawEmail && !email) {
+    return NextResponse.json({ error: "bad_email" }, { status: 400 });
   }
 
   const locale = body.locale;
@@ -67,7 +77,7 @@ export async function POST(req: Request) {
     });
 
     existing = await getByHash(phoneHash(e164));
-    await upsertSubscriber({ e164, locale, zip: existing?.zip ?? "00000" });
+    await upsertSubscriber({ e164, email, locale, zip: existing?.zip ?? "00000" });
   } catch (err) {
     console.error("[consent] storage write failed", err);
     return NextResponse.json({ error: "storage_unavailable" }, { status: 503 });
@@ -84,6 +94,18 @@ export async function POST(req: Request) {
       templateKey: "confirm",
       locale,
     });
+    // Same message to the inbox when there is one. Separate call rather than a
+    // fallback: a person who gave both asked for both, and email is the channel
+    // that actually arrives while A2P registration is pending.
+    if (email) {
+      void sendEmail({
+        to: email,
+        phoneHash: phoneHash(e164),
+        text: render("confirm", locale),
+        templateKey: "confirm",
+        locale,
+      });
+    }
   }
 
   return NextResponse.json({

@@ -40,6 +40,18 @@ export function decryptPhone(blob: string): string {
   return decipher.update(buf.subarray(28)).toString("utf8") + decipher.final("utf8");
 }
 
+// Email gets the same treatment as the phone number: encrypted at rest with
+// the same key, decrypted only by the send path. It is deliberately NOT hashed
+// into a join key -- phone_hash stays the single identity across both stores,
+// and a second one would be a second way to correlate a person.
+export function encryptEmail(email: string): string {
+  return encryptPhone(email.trim().toLowerCase());
+}
+
+export function decryptEmail(blob: string): string {
+  return decryptPhone(blob);
+}
+
 /** IPs are stored hashed — enough to detect abuse, not enough to track people. */
 export function ipHash(ip: string): string {
   return crypto

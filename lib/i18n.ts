@@ -27,6 +27,9 @@ type Copy = {
     placeholder: string;
     consent: string;
     error: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    emailError: string;
   };
   zip: {
     title: string;
@@ -58,7 +61,7 @@ type Copy = {
 
 // Consent wording is versioned. Bump CONSENT_VERSION on ANY change to
 // phone.consent in any locale — the exact rendered string is what gets stored.
-export const CONSENT_VERSION = "2026-08-28.1";
+export const CONSENT_VERSION = "2026-08-28.2";
 
 export const COPY: Record<Locale, Copy> = {
   en: {
@@ -76,8 +79,11 @@ export const COPY: Record<Locale, Copy> = {
       label: "Your mobile number",
       placeholder: "(415) 555-0123",
       consent:
-        "We'll text you when free food is near you. Message and data rates may apply. Text STOP anytime to quit. We use your number only to send food alerts. We never sell your information.",
+        "We'll text you when free food is near you, and email you too if you add an address. Message and data rates may apply. Text STOP anytime to quit, or use the unsubscribe link in any email. We use your number and email only to send food alerts. We never sell your information.",
       error: "Enter a 10-digit mobile number",
+      emailLabel: "Email (optional)",
+      emailPlaceholder: "you@example.com",
+      emailError: "Enter a valid email address, or leave it blank",
     },
     zip: {
       title: "What's your ZIP code?",
@@ -145,8 +151,11 @@ export const COPY: Record<Locale, Copy> = {
       label: "您的手机号码",
       placeholder: "(415) 555-0123",
       consent:
-        "附近有免费食物时，我们会发短信通知您。可能产生短信和数据费用。随时回复 STOP 退订。您的号码只用于发送食物提醒。我们绝不出售您的信息。",
+        "附近有免费食物时，我们会发短信通知您；如果您填写电子邮件，我们也会发邮件。可能产生短信和数据费用。随时回复 STOP 退订，或点击邮件中的退订链接。您的号码和邮箱只用于发送食物提醒。我们绝不出售您的信息。",
       error: "请输入 10 位手机号码",
+      emailLabel: "电子邮件（选填）",
+      emailPlaceholder: "you@example.com",
+      emailError: "请输入有效的电子邮件地址，或留空",
     },
     zip: {
       title: "您的邮政编码是多少？",
@@ -214,8 +223,11 @@ export const COPY: Record<Locale, Copy> = {
       label: "Su número de celular",
       placeholder: "(415) 555-0123",
       consent:
-        "Le enviaremos un mensaje de texto cuando haya comida gratis cerca de usted. Pueden aplicarse tarifas de mensajes y datos. Envíe STOP en cualquier momento para cancelar. Usamos su número solo para enviar avisos de comida. Nunca vendemos su información.",
+        "Le enviaremos un mensaje de texto cuando haya comida gratis cerca de usted, y también un correo si agrega una dirección. Pueden aplicarse tarifas de mensajes y datos. Envíe STOP en cualquier momento para cancelar, o use el enlace para darse de baja en cualquier correo. Usamos su número y su correo solo para enviar avisos de comida. Nunca vendemos su información.",
       error: "Ingrese un número de celular de 10 dígitos",
+      emailLabel: "Correo electrónico (opcional)",
+      emailPlaceholder: "usted@ejemplo.com",
+      emailError: "Ingrese un correo válido, o déjelo en blanco",
     },
     zip: {
       title: "¿Cuál es su código postal?",

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { insert, query, chTime } from "./clickhouse";
-import { phoneHash, encryptPhone, decryptPhone, ipHash } from "./crypto";
+import { phoneHash, encryptPhone, decryptPhone, encryptEmail, decryptEmail, ipHash } from "./crypto";
 import type { Locale } from "./i18n";
 
 export type Status = "pending" | "active" | "stopped" | "bounced" | "waitlist";
@@ -8,6 +8,7 @@ export type Status = "pending" | "active" | "stopped" | "bounced" | "waitlist";
 export type Subscriber = {
   phone_hash: string;
   phone_enc: string;
+  email_enc: string;
   locale: Locale;
   zip: string;
   lat: number | null;
@@ -38,6 +39,11 @@ export function revealPhone(sub: Subscriber): string {
   return decryptPhone(sub.phone_enc);
 }
 
+/** Email in the clear, for the send path only. Null when none is on file. */
+export function revealEmail(sub: Subscriber): string | null {
+  return sub.email_enc ? decryptEmail(sub.email_enc) : null;
+}
+
 /**
  * Insert-or-update. ReplacingMergeTree collapses on phone_hash, so a repeat
  * signup edits the existing person rather than creating a duplicate. An
@@ -45,6 +51,7 @@ export function revealPhone(sub: Subscriber): string {
  */
 export async function upsertSubscriber(input: {
   e164: string;
+  email?: string | null;
   locale: Locale;
   zip: string;
   lat?: number | null;
@@ -63,6 +70,14 @@ export async function upsertSubscriber(input: {
   const row: Subscriber = {
     phone_hash: hash,
     phone_enc: encryptPhone(input.e164),
+    // Absent input keeps whatever is on file; only an explicit address changes
+    // it, so a later onboarding step can never silently drop someone's email.
+    email_enc:
+      input.email === undefined
+        ? (existing?.email_enc ?? "")
+        : input.email
+          ? encryptEmail(input.email)
+          : "",
     locale: input.locale,
     zip: input.zip,
     lat: input.lat ?? existing?.lat ?? null,

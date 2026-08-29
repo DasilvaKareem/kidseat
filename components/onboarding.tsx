@@ -18,6 +18,7 @@ type State = {
   step: Step;
   locale: Locale;
   phone: string;
+  email: string;
   token: string;
   zip: string;
   household: string;
@@ -28,6 +29,7 @@ const EMPTY: State = {
   step: "language",
   locale: "en",
   phone: "",
+  email: "",
   token: "",
   zip: "",
   household: "",
@@ -151,6 +153,7 @@ export default function Onboarding() {
 
   const errorCopy = (status: number, code?: string, missing?: string[]) => {
     if (code === "bad_phone") return t.phone.error;
+    if (code === "bad_email") return t.phone.emailError;
     if (status === 429 || code === "rate_limited") return t.common.rateLimited;
     // The server only returns `missing` outside production — it turns an
     // opaque 503 into an actionable one while developing.
@@ -167,7 +170,7 @@ export default function Onboarding() {
       const res = await fetch("/api/consent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: s.phone, locale: s.locale }),
+        body: JSON.stringify({ phone: s.phone, email: s.email, locale: s.locale }),
       });
       const json = (await res.json().catch(() => ({}))) as {
         token?: string;
@@ -279,6 +282,20 @@ export default function Onboarding() {
               setS((prev) => ({ ...prev, phone: formatUS(e.target.value) }))
             }
           />
+          {/* Optional, and labelled as such: this is an SMS-first service and
+              plenty of people signing up will not have an email address. */}
+          <div className="mt-4">
+            <Field
+              name="email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              label={t.phone.emailLabel}
+              placeholder={t.phone.emailPlaceholder}
+              value={s.email}
+              onChange={(e) => setS((prev) => ({ ...prev, email: e.target.value }))}
+            />
+          </div>
           {/* Consent sits above the button, never below it. */}
           <p className="mt-4 rounded-2xl bg-surface p-4 text-[16px] leading-relaxed text-muted">
             {t.phone.consent}
