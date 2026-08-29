@@ -715,12 +715,26 @@ async function retireDevSeed() {
     // programs.pantry_id is ON DELETE SET NULL, so a purge orphans any seeded
     // program rather than failing or silently deleting it.
     await db().query("DELETE FROM pantries WHERE source = 'dev-seed'");
+    await db().query("DELETE FROM pantry_events WHERE source = 'dev-seed'");
     return "deleted";
   }
+
+  // Events as well as sites. A fixture event carries its own address, so
+  // retiring only the pantries left "000 Example St (NOT A REAL SITE)" showing
+  // in /api/map next to the real ones -- the fake row a dev seed exists to keep
+  // out of real output.
   const stale = await existingRows(["dev-seed"]);
-  if (stale.length === 0) return "none present";
-  await deactivate(stale.map((r) => r.pantry_id));
-  return `${stale.length} deactivated`;
+  if (stale.length > 0) await deactivate(stale.map((r) => r.pantry_id));
+
+  const events = await db().query(
+    `UPDATE pantry_events SET cancelled = true, updated_at = $1
+      WHERE source = 'dev-seed' AND NOT cancelled
+      RETURNING event_id`,
+    [UPDATED_AT],
+  );
+
+  if (stale.length === 0 && events.length === 0) return "none present";
+  return `${stale.length} sites deactivated, ${events.length} events cancelled`;
 }
 
 // ---------------------------------------------------------------------------
