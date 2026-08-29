@@ -1,4 +1,5 @@
 import { generateText, tool, stepCountIs } from "ai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
 import type { Locale } from "./i18n";
 import { findNearby, type Match } from "./pantries";
@@ -19,9 +20,17 @@ import {
 } from "./screening";
 import { forModel, route } from "./eligibility";
 
-// Routed through the Vercel AI Gateway, so the model is a plain
-// "provider/model" string and swapping models is an env change.
-const MODEL = process.env.AI_MODEL ?? "google/gemini-3.5-flash-lite";
+// A bare "provider/model" string routes through the Vercel AI Gateway, which
+// wants AI_GATEWAY_API_KEY. When a Google key is present we talk to Google
+// directly instead, so the same AI_MODEL value works on either path and
+// swapping models stays an env change.
+const MODEL_ID = process.env.AI_MODEL ?? "google/gemini-3.5-flash-lite";
+
+export function model(): Parameters<typeof generateText>[0]["model"] {
+  const key = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!key) return MODEL_ID;
+  return createGoogleGenerativeAI({ apiKey: key })(MODEL_ID.replace(/^google\//, ""));
+}
 
 const LANG_NAME: Record<Locale, string> = {
   en: "English",
@@ -111,7 +120,7 @@ export async function composeFoodSms(
 
   try {
     const { text } = await generateText({
-      model: MODEL,
+      model: model(),
       temperature: 0.2,
       maxOutputTokens: 300,
       system: smsRules(locale, BUDGET[locale]),
@@ -406,7 +415,7 @@ export async function answerFoodRequest(opts: {
 
   try {
     const { text } = await generateText({
-      model: MODEL,
+      model: model(),
       temperature: 0.2,
       maxOutputTokens: 600,
       tools: buildTools(ctx),

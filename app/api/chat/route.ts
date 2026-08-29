@@ -3,12 +3,11 @@ import { z } from "zod";
 import { readSession } from "@/lib/session";
 import { getByHash } from "@/lib/subscribers";
 import { isLocale, type Locale } from "@/lib/i18n";
-import { buildTools, buildScreeningTools, ELIGIBILITY_RULES } from "@/lib/agent";
+import { buildTools, buildScreeningTools, ELIGIBILITY_RULES, model } from "@/lib/agent";
 import { listPrograms, listApplications } from "@/lib/programs";
 
 export const maxDuration = 60;
 
-const MODEL = process.env.AI_MODEL ?? "google/gemini-3.5-flash-lite";
 
 const LANG_NAME: Record<Locale, string> = {
   en: "English",
@@ -102,7 +101,7 @@ export async function POST(req: Request) {
   const messages = await convertToModelMessages(body.messages);
 
   const result = streamText({
-    model: MODEL,
+    model: model(),
     temperature: 0.3,
     tools,
     stopWhen: stepCountIs(6),

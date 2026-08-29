@@ -18,6 +18,7 @@
     "check:api": "node scripts/check-api.mjs"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.57",
     "@ai-sdk/react": "^4.0.87",
     "@clickhouse/client": "^1.23.1",
     "@neondatabase/serverless": "^1.1.0",
